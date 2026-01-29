@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { generateResponse } from '../services/ai';
 import DataChart from './DataChart';
 
-const ChatWindow = () => {
+const ChatWindow = ({ rowCount, theme }) => {
     const [messages, setMessages] = useState([
         { sender: 'ai', text: 'Hello! I am your Offline Data Analyst. How can I help you today?' }
     ]);
@@ -80,7 +80,7 @@ const ChatWindow = () => {
                         // FORCE RENDER CHART
                         setMessages(prev => [...prev, {
                             sender: 'ai',
-                            component: <DataChart data={results} type="BAR" />
+                            component: <DataChart data={results} type="BAR" theme={theme} />
                         }]);
                     } else {
                         // RENDER TABLE (Simple JSON dump for verification)
@@ -97,21 +97,33 @@ const ChatWindow = () => {
 
             // 2. Normal AI Flow (If not starting with SQL:/CHART:)
             // 1. Construct System Prompt with Schema
-            const systemPrompt = `You are a SQL expert. Table 'dataset' has schema: ${schema || 'Unknown'}. 
-            If the user asks for visualization, prepend [BAR_CHART] or [LINE_CHART].
-            Generate a DuckDB SQL query to answer the user. 
-            Output ONLY the SQL query wrapped in markdown code blocks. Do not explain.`;
+            const systemPrompt = `You are a SQL generator for DuckDB. Your name is InsightEngine. 
+            The table is named 'dataset'. 
+            COLUMNS: ${schema || 'Unknown'}. 
+            RULES: 
+            1. Output ONLY the raw SQL query. 
+            2. Do NOT use Markdown (no \`\`\`sql). 
+            3. Do NOT say 'Here is the code'. 
+            4. Always use 'LIMIT 5' for lists. 
+            5. If the user asks for visualization, prepend [BAR_CHART] or [LINE_CHART].
+            6. If the user asks a non-data question, reply in plain text.`;
 
             const fullPrompt = `${systemPrompt}\n\nUser Question: ${userMessage.text}`;
 
             // 2. Get AI Response
             const aiText = await generateResponse(fullPrompt);
 
-            // 3. Check for SQL
-            const sqlMatch = aiText.match(/```sql\s*([\s\S]*?)\s*```/);
+            // 3. Clean and Check for SQL
+            let sql = aiText.trim();
+            // Remove Markdown code blocks if present (legacy support)
+            sql = sql.replace(/```sql/g, '').replace(/```/g, '').trim();
 
-            if (sqlMatch) {
-                const sql = sqlMatch[1].trim();
+            // Remove any text before the SELECT (if the AI ignores rules)
+            const selectIndex = sql.toUpperCase().indexOf('SELECT');
+
+            if (selectIndex > -1) {
+                // It IS a SQL query
+                sql = sql.substring(selectIndex); // Cleaned SQL
 
                 // --- INTELLIGENT DETECTION START ---
                 let chartType = null;
@@ -135,7 +147,7 @@ const ChatWindow = () => {
                     // Render Chart
                     setMessages(prev => [...prev, {
                         sender: 'ai',
-                        component: <DataChart data={results} type={chartType} />
+                        component: <DataChart data={results} type={chartType} theme={theme} />
                     }]);
                 } else if (Array.isArray(results) && results.length > 0) {
                     // Render Table

@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DataChart from './components/DataChart';
-import ollama from 'ollama';
+// import ollama from 'ollama'; 
+// Use window.require for Electron, or fallback for Browser Dev Mode
+const ollama = window.require ? window.require('ollama') : {
+  chat: async () => ({ message: { content: "Error: Ollama not found. Run in Electron or use a Mock." } })
+};
+
 import * as duckdb from '@duckdb/duckdb-wasm';
 
 let db = null;
@@ -29,7 +34,7 @@ function App() {
   const [chartData, setChartData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [fileName, setFileName] = useState(null);
-  const [schema, setSchema] = useState(''); // NEW: Store column names
+  const [schema, setSchema] = useState('');
   const chatEndRef = useRef(null);
 
   useEffect(() => {
@@ -111,7 +116,12 @@ function App() {
         ]
       });
 
-      let cleanSQL = response.message.content.replace(/```sql/g, '').replace(/```/g, '').trim();
+      let cleanSQL = "";
+      if (response && response.message) {
+        cleanSQL = response.message.content.replace(/```sql/g, '').replace(/```/g, '').trim();
+      } else {
+        throw new Error("Invalid AI Response. Check if Ollama is running.");
+      }
 
       // AUTO-CORRECTOR
       const topMatch = cleanSQL.match(/TOP\(?(\d+)\)?/i);

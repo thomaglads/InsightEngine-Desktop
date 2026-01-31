@@ -258,13 +258,70 @@ ${historyContext}
     .replace(/```sql|```/g, '')
     .trim();
 
-  // 3. Post-Processing (The Safety Firewall)
+// 3. Post-Processing (The Safety Firewall)
   // Remove any text after the first semicolon to enforce silence
   if (cleanSQL.includes(';')) {
     cleanSQL = cleanSQL.split(';')[0] + ';';
   }
 
   return cleanSQL;
+};
+
+  const generateQuery = async (historyContext, lastMessage) => {
+    // 1. Define System Prompt
+    const systemPrompt = `You are a strict SQL generator for DuckDB.
+The table name is \'dataset\'.
+THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}.
+RULES:
+
+1. Use ONLY the columns listed above.
+2. Return ONLY raw SQL. No markdown.
+3. NO Explanations: Return ONLY raw SQL string. Do NOT add any text, comments, or explanations.
+4. NO Markdown: Do NOT use code blocks.
+5. Strict Ending: The output must start with SELECT and end with a semicolon ;. Nothing else.
+
+UNIVERSAL DATA HEURISTICS:
+1. **Math on Text Protection:**
+   - NEVER calculate averages/sums on Text columns (e.g., \'High\', \'Medium\', \'Grade\').
+   - IF user asks for math on a Text column, LOOK for a paired numeric ID column (e.g., \'Status\' -> \'StatusID\', \'Grade\' -> \'GradeID\').
+   - IF no ID exists, use \`COUNT\` or \`GROUP BY\` instead.
+2. **Universal Date Parsing:**
+   - CSV dates are loaded as Strings. You MUST cast them to compare or sort.
+   - PRIMARY STRATEGY: Assume \'MM/DD/YYYY\' (Excel/US Standard). Use \`strptime(ColumnName, \'%m/%d/%Y\')\`.
+   - SECONDARY STRATEGY: If column implies ISO format, use \`CAST(ColumnName AS DATE)\`.
+   - DURATION/TENURE: Use Start Dates (e.g., \'HireDate\', \'OrderDate\') to calculate age/duration.
+3. **Status & Lifecycle Logic:**
+   - \'Active/Open/Current\': usually means \'End Date\' column IS NULL (e.g., \'TerminationDate IS NULL\', \'ShippedDate IS NULL\').
+   - \'Inactive/Closed/Past\': usually means \'End Date\' column IS NOT NULL (e.g., \'TerminationDate IS NOT NULL\', \'ShippedDate IS NOT NULL\').
+
+[PREVIOUS CONTEXT]
+${historyContext}
+[CURRENT REQUEST]\`;
+
+    // 2. Call the AI
+    const response = await fetch('http://localhost:11434/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'phi3',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: lastMessage }],
+        stream: false
+      })
+    });
+
+    // --- THE FIX IS HERE ---
+    const data = await response.json(); // Define 'data' from the response
+    let cleanSQL = data.message.content // Now we can use it
+      .replace(/```sql|```/g, '')
+      .trim();
+
+    // 3. Post-Processing (The Safety Firewall)
+    // Remove any text after the first semicolon to enforce silence
+    if (cleanSQL.includes(';')) {
+      cleanSQL = cleanSQL.split(';')[0] + ';';
+    }
+
+    return cleanSQL;
   };
 
   const handleChat = async () => {

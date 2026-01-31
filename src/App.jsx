@@ -215,8 +215,8 @@ function App() {
   };
 
   const generateQuery = async (historyContext, lastMessage) => {
-    // 1. Define the System Prompt
-    const systemPrompt = `You are a strict SQL generator for DuckDB.
+  // 1. Define System Prompt
+  const systemPrompt = `You are a strict SQL generator for DuckDB.
 The table name is 'dataset'.
 THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}.
 RULES:
@@ -249,20 +249,19 @@ ${historyContext}
       })
     });
 
-    // 3. Post-Processing (The Safety Firewall)
-    let content = data.message.content;
-    let cleanSQL = content.replace(/```sql([\s\S]*?)```/g, '').trim();
+  // --- THE FIX IS HERE ---
+  const data = await response.json(); // Define 'data' from the response
+  let cleanSQL = data.message.content // Now we can use it
+    .replace(/```sql|```/g, '')
+    .trim();
 
-    // Remove any text after the first semicolon to enforce silence
-    if (cleanSQL.includes(';')) {
-      cleanSQL = cleanSQL.split(';')[0] + ';';
-    }
+  // 3. Post-Processing (The Safety Firewall)
+  // Remove any text after the first semicolon to enforce silence
+  if (cleanSQL.includes(';')) {
+    cleanSQL = cleanSQL.split(';')[0] + ';';
+  }
 
-    if (cleanSQL.toUpperCase().includes('TOP')) {
-      cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
-    }
-
-    return cleanSQL;
+  return cleanSQL;
   };
 
   const handleChat = async () => {

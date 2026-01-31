@@ -12,6 +12,7 @@ function App() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [schema, setSchema] = useState(null);
+  const [dbSchema, setDbSchema] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
 
@@ -67,11 +68,19 @@ function App() {
       await conn.query(`DROP TABLE IF EXISTS dataset;`);
       await db.registerFileHandle(file.name, file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
       await conn.query(`CREATE TABLE dataset AS SELECT * FROM '${file.name}';`);
+      
+      // Capture Schema on Load using PRAGMA table_info
+      const pragmaRes = await conn.query('PRAGMA table_info(dataset)');
+      const columnNames = pragmaRes.toArray().map(row => row.name);
+      setDbSchema(columnNames);
+      
       const schemaRes = await conn.query(`DESCRIBE dataset;`);
       const columns = schemaRes.toArray().map(row => row.column_name).join(', ');
       setSchema(columns);
       setCurrentFile(file.name);
-      setMessages(prev => [...prev, { role: 'system', content: `LOADED: ${file.name}` }]);
+      
+      // User Notification with detected columns
+      setMessages(prev => [...prev, { role: 'system', content: `DATASET LOADED. Detected Columns: [${columnNames.join(', ')}]` }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'error', content: `ERROR: ${err.message}` }]);
     }
@@ -123,16 +132,14 @@ function App() {
     setLoading(true);
 
     try {
-      const systemPrompt = `You are a SQL generator for DuckDB. 
-      The ONLY table available is 'dataset'. 
-      COLUMNS: ${schema}. 
-      RULES: 
-      1. Use LIMIT, not TOP. 
-      2. Quote columns. 
-      3. Output ONLY SQL code block. 
-      4. DO NOT JOIN other tables. 
-      5. SELECT from 'dataset' ONLY. 
-      6. NO EXPLANATIONS.`;
+      // Inject Context into AI with the new System Prompt
+      const systemPrompt = `You are a strict SQL generator. The table name is 'dataset'. THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}. RULES:
+
+Use ONLY the columns listed above.
+
+Return ONLY raw SQL. No markdown.
+
+If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.`;
 
       const response = await fetch('http://localhost:11434/api/chat', {
         method: 'POST',

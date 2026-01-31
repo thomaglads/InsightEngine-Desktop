@@ -231,8 +231,11 @@ DUCKDB DIALECT RULES:
 - Use 'current_date' for today.
 - Use 'INTERVAL 1 YEAR' for date math.
 - Do NOT use CURDATE(), NOW(), DATE_SUB(), or DATEADD().
-- To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
-- SINGLE TABLE MODE: Do NOT use JOINs. Use WHERE clauses.
+- CRITICAL: DuckDB loads CSV dates as STRINGS. You MUST cast them.
+      * Bad: DateofHire + INTERVAL...
+      * Good: CAST(DateofHire AS DATE) + INTERVAL...
+    - To calculate Age: (date_part('year', current_date) - date_part('year', CAST(DOB AS DATE))).
+    - SINGLE TABLE MODE: Do NOT use JOINs. Use WHERE clauses.
 
 [PREVIOUS CONTEXT]
 ${historyContext}

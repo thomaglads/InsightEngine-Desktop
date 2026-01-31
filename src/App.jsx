@@ -214,6 +214,57 @@ function App() {
     return { xKey, dataKey };
   };
 
+  const generateQuery = async (historyContext, lastMessage) => {
+    // 1. Define the System Prompt
+    const systemPrompt = `You are a strict SQL generator for DuckDB.
+The table name is 'dataset'.
+THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}.
+RULES:
+
+1. Use ONLY the columns listed above.
+2. Return ONLY raw SQL. No markdown.
+3. NO Explanations: Return ONLY raw SQL string. Do NOT add any text, comments, or explanations.
+4. NO Markdown: Do NOT use code blocks.
+5. Strict Ending: The output must start with SELECT and end with a semicolon ;. Nothing else.
+
+DUCKDB DIALECT RULES:
+- Use 'current_date' for today.
+- Use 'INTERVAL 1 YEAR' for date math.
+- Do NOT use CURDATE(), NOW(), DATE_SUB(), or DATEADD().
+- To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
+- SINGLE TABLE MODE: Do NOT use JOINs. Use WHERE clauses.
+
+[PREVIOUS CONTEXT]
+${historyContext}
+[CURRENT REQUEST]`;
+
+    // 2. Call the AI
+    const response = await fetch('http://localhost:11434/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'phi3',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: lastMessage }],
+        stream: false
+      })
+    });
+
+    // 3. Post-Processing (The Safety Firewall)
+    let content = data.message.content;
+    let cleanSQL = content.replace(/```sql([\s\S]*?)```/g, '').trim();
+
+    // Remove any text after the first semicolon to enforce silence
+    if (cleanSQL.includes(';')) {
+      cleanSQL = cleanSQL.split(';')[0] + ';';
+    }
+
+    if (cleanSQL.toUpperCase().includes('TOP')) {
+      cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
+    }
+
+    return cleanSQL;
+  };
+
   const handleChat = async () => {
     if (!input.trim()) return;
     const userText = input;
@@ -227,68 +278,12 @@ function App() {
         `Q: ${exchange.question}\nSQL: ${exchange.sql}`
       ).join('\n');
 
-      // Inject Context into AI with the new System Prompt including history
-      const systemPrompt = `You are a strict SQL generator for DuckDB.
-The table name is 'dataset'.
-THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}.
-RULES:
-
-Use ONLY the columns listed above.
-
-Return ONLY raw SQL. No markdown.
-
-DUCKDB DIALECT ONLY:
-
-Use 'current_date' for today.
-
-FOR DATE MATH, USE INTERVALS ONLY. Example: current_date - INTERVAL 1 YEAR. DO NOT use DATEADD, DATEDIFF, or DATE_SUB.
-
-To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
-
-If a column is a string, use strptime(column, '%m/%d/%Y') or CAST(column AS DATE).
-
-SINGLE TABLE MODE: Assume dataset is a single flat table. Do NOT use JOIN statements. Use WHERE clauses to filter data instead.
-
-If the user asks for the meaning of a value (e.g., "What is 0?"), do NOT apologize. Instead, write a SQL query to inspect the data. Try to find the distinct value and any related text columns that might explain it.
-
-Example Logic: SELECT DISTINCT column_name, other_text_column FROM dataset LIMIT 20;
-
-NO Explanations: Return ONLY raw SQL string. Do NOT add any text, comments, or explanations before or after the code.
-
-No Markdown: Do NOT use markdown code blocks (```sql).
-
-Strict Ending: The output must start with SELECT and end with a semicolon ;. Nothing else.
-
-[PREVIOUS CONTEXT]
-${historyContext}
-[CURRENT REQUEST]`;
-
-      const response = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'phi3',
-          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }],
-          stream: false
-        })
-      });
-      if (!response.ok) throw new Error("Ollama offline.");
-      const data = await response.json();
-
-      const content = data.message.content;
-      const sqlMatch = content.match(/```sql([\s\S]*?)```/);
-      let cleanSQL = sqlMatch ? sqlMatch[1].trim() : content.replace(/```sql|```/g, '').trim();
-
-      // Force Clean SQL - Strip any text after first semicolon
-      if (cleanSQL.includes(';')) {
-        cleanSQL = cleanSQL.split(';')[0] + ';';
-      }
-      
-      if (cleanSQL.toUpperCase().includes('TOP')) cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
+      // Generate clean SQL
+      const cleanSQL = await generateQuery(historyContext, userText);
 
       setMessages(prev => [...prev, { text: cleanSQL, sender: 'bot' }]);
       
-      // Update chat history with new exchange (only if query was successful)
+      // Update chat history with the new exchange (only if query was successful)
       await runQuery(cleanSQL);
       setChatHistory(prev => [...prev.slice(-2), { question: userText, sql: cleanSQL }]);
     } catch (err) {

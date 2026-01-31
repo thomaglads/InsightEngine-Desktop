@@ -231,10 +231,10 @@ DUCKDB DIALECT RULES:
 - Use 'current_date' for today.
 - Use 'INTERVAL 1 YEAR' for date math.
 - Do NOT use CURDATE(), NOW(), DATE_SUB(), or DATEADD().
-- CRITICAL: DuckDB loads CSV dates as STRINGS. You MUST cast them.
-      * Bad: DateofHire + INTERVAL...
-      * Good: CAST(DateofHire AS DATE) + INTERVAL...
-    - To calculate Age: (date_part('year', current_date) - date_part('year', CAST(DOB AS DATE))).
+- CRITICAL: Date columns are strings in 'MM/DD/YYYY' format.
+      * YOU MUST USE: strptime(DateColumn, '%m/%d/%Y')
+      * Example: strptime(DateofHire, '%m/%d/%Y') > current_date - INTERVAL 1 YEAR
+    - To calculate Age: (date_part('year', current_date) - date_part('year', strptime(DOB, '%m/%d/%Y'))).
     - SINGLE TABLE MODE: Do NOT use JOINs. Use WHERE clauses.
 
 [PREVIOUS CONTEXT]

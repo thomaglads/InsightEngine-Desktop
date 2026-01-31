@@ -80,9 +80,9 @@ function App() {
       setCurrentFile(file.name);
       
       // User Notification with detected columns
-      setMessages(prev => [...prev, { role: 'system', content: `DATASET LOADED. Detected Columns: [${columnNames.join(', ')}]` }]);
+      setMessages(prev => [...prev, { text: `DATASET LOADED. Detected Columns: [${columnNames.join(', ')}]`, sender: 'bot' }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'error', content: `ERROR: ${err.message}` }]);
+      setMessages(prev => [...prev, { text: `ERROR: ${err.message}`, sender: 'bot' }]);
     }
     setLoading(false);
   };
@@ -102,7 +102,7 @@ function App() {
       });
       if (rawData.length > 0) setChartData(rawData);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'error', content: `SQL ERROR: ${err.message}` }]);
+      setMessages(prev => [...prev, { text: `SQL ERROR: ${err.message}`, sender: 'bot' }]);
     }
   };
 
@@ -128,7 +128,7 @@ function App() {
     if (!input.trim()) return;
     const userText = input;
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userText }]);
+    setMessages(prev => [...prev, { text: userText, sender: 'user' }]);
     setLoading(true);
 
     try {
@@ -159,10 +159,10 @@ If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.`;
 
       if (cleanSQL.toUpperCase().includes('TOP')) cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
 
-      setMessages(prev => [...prev, { role: 'assistant', content: cleanSQL }]);
+      setMessages(prev => [...prev, { text: cleanSQL, sender: 'bot' }]);
       await runQuery(cleanSQL);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'error', content: `AI ERROR: ${err.message}` }]);
+      setMessages(prev => [...prev, { text: `AI ERROR: ${err.message}`, sender: 'bot' }]);
     }
     setLoading(false);
   };
@@ -192,11 +192,11 @@ If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.`;
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm leading-relaxed">
           {messages.map((msg, i) => (
-            <div key={i} className={`${msg.role === 'error' ? 'text-red-400' : msg.role === 'user' ? 'text-zinc-300' : 'text-emerald-400'} border-l-2 pl-3 ${msg.role === 'error' ? 'border-red-900' : 'border-zinc-800'}`}>
+            <div key={i} className={`${msg.sender === 'user' ? 'text-zinc-300' : 'text-emerald-400'} border-l-2 pl-3 ${msg.sender === 'user' ? 'border-zinc-800' : 'border-zinc-900'}`}>
               <span className="opacity-50 mr-2 font-bold select-none">
-                {msg.role === 'user' ? '>' : msg.role === 'error' ? '!' : '#'}
+                {msg.sender === 'user' ? '>' : '#'}
               </span>
-              {msg.content}
+              {msg.text}
             </div>
           ))}
           <div ref={chatEndRef} />

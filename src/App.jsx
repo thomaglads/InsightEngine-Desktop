@@ -14,6 +14,7 @@ function App() {
   const [schema, setSchema] = useState(null);
   const [dbSchema, setDbSchema] = useState([]);
   const [chatHistory, setChatHistory] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
 
@@ -82,10 +83,46 @@ function App() {
       
       // User Notification with detected columns
       setMessages(prev => [...prev, { text: `DATASET LOADED. Detected Columns: [${columnNames.join(', ')}]`, sender: 'bot' }]);
+      
+      // Generate Smart Suggestions
+      await generateSmartSuggestions(columnNames);
     } catch (err) {
       setMessages(prev => [...prev, { text: `ERROR: ${err.message}`, sender: 'bot' }]);
     }
     setLoading(false);
+  };
+
+  const generateSmartSuggestions = async (columnNames) => {
+    try {
+      const suggestionPrompt = `You are a Data Assistant. The available columns are: ${columnNames.join(', ')}. Generate 3 distinct, simple business questions a non-technical user might ask about this data. Format: JSON Array only. Example: ["Show top 5 sales", "Count employees by region", "Average salary"].`;
+
+      const response = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'phi3',
+          messages: [{ role: 'system', content: suggestionPrompt }, { role: 'user', content: columnNames.join(', ') }],
+          stream: false
+        })
+      });
+
+      if (!response.ok) throw new Error("Failed to generate suggestions");
+      
+      const data = await response.json();
+      const content = data.message.content.trim();
+      
+      // Parse JSON array from response
+      const suggestionsArray = JSON.parse(content.replace(/```json|```/g, '').trim());
+      setSuggestions(suggestionsArray);
+    } catch (err) {
+      console.error('Failed to generate suggestions:', err);
+      setSuggestions([]); // Fallback to no suggestions
+    }
+  };
+
+  const handleSuggestionClick = async (suggestion) => {
+    setInput(suggestion);
+    await handleChat();
   };
 
   const runQuery = async (sql) => {
@@ -214,6 +251,24 @@ ${historyContext}
           ))}
           <div ref={chatEndRef} />
         </div>
+
+        {/* Smart Suggestion Chips */}
+        {suggestions.length > 0 && messages.length <= 2 && (
+          <div className="px-6 pt-4 pb-2">
+            <div className="text-xs text-zinc-500 mb-2 uppercase tracking-wider">Suggested Questions</div>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((suggestion, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSuggestionClick(suggestion)}
+                  className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-full transition-colors border border-zinc-700 hover:border-zinc-600 cursor-pointer"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="p-6 border-t border-zinc-800 bg-black">
           <div className="flex items-stretch border border-zinc-700 rounded-lg overflow-hidden focus-within:border-white transition-colors h-12">

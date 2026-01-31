@@ -253,6 +253,12 @@ If the user asks for the meaning of a value (e.g., "What is 0?"), do NOT apologi
 
 Example Logic: SELECT DISTINCT column_name, other_text_column FROM dataset LIMIT 20;
 
+NO Explanations: Return ONLY raw SQL string. Do NOT add any text, comments, or explanations before or after the code.
+
+No Markdown: Do NOT use markdown code blocks (```sql).
+
+Strict Ending: The output must start with SELECT and end with a semicolon ;. Nothing else.
+
 [PREVIOUS CONTEXT]
 ${historyContext}
 [CURRENT REQUEST]`;
@@ -273,6 +279,11 @@ ${historyContext}
       const sqlMatch = content.match(/```sql([\s\S]*?)```/);
       let cleanSQL = sqlMatch ? sqlMatch[1].trim() : content.replace(/```sql|```/g, '').trim();
 
+      // Force Clean SQL - Strip any text after first semicolon
+      if (cleanSQL.includes(';')) {
+        cleanSQL = cleanSQL.split(';')[0] + ';';
+      }
+      
       if (cleanSQL.toUpperCase().includes('TOP')) cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
 
       setMessages(prev => [...prev, { text: cleanSQL, sender: 'bot' }]);

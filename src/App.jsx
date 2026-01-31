@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label } from 'recharts';
-import { Folder, Play, Activity, Database, Globe, GripVertical } from 'lucide-react';
+import { Folder, Play, Activity, Database, Globe, GripVertical, Download, FileDown } from 'lucide-react';
 
 const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
@@ -123,6 +123,58 @@ function App() {
   const handleSuggestionClick = async (suggestion) => {
     setInput(suggestion);
     await handleChat();
+  };
+
+  const downloadResults = () => {
+    if (!chartData || chartData.length === 0) return;
+    
+    // Convert JSON to CSV
+    const headers = Object.keys(chartData[0]);
+    const csvContent = [
+      headers.join(','),
+      ...chartData.map(row => headers.map(header => `"${row[header]}"`).join(','))
+    ].join('\n');
+    
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'results.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
+  const downloadChart = () => {
+    const chartElement = document.querySelector('.recharts-responsive-container');
+    if (!chartElement) return;
+
+    // Create canvas from SVG
+    const svgElement = chartElement.querySelector('svg');
+    if (!svgElement) return;
+
+    const svgString = new XMLSerializer().serializeToString(svgElement);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    const img = new Image();
+    img.onload = function() {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      
+      // Download as PNG
+      const link = document.createElement('a');
+      link.download = 'chart.png';
+      link.href = canvas.toDataURL('image/png');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+    
+    img.src = 'data:image/svg+xml;base64,' + btoa(svgString);
   };
 
   const runQuery = async (sql) => {
@@ -313,10 +365,31 @@ ${historyContext}
             ) : (
               <>
                 {/* DYNAMIC CHART TITLE */}
-                <div className="text-center mb-2">
-                  <h3 className="text-lg font-bold text-white tracking-wide uppercase">
-                    {dataKey} by {xKey}
-                  </h3>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-center flex-1">
+                    <h3 className="text-lg font-bold text-white tracking-wide uppercase">
+                      {dataKey} by {xKey}
+                    </h3>
+                  </div>
+                  {/* Export Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={downloadResults}
+                      className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors border border-zinc-700 hover:border-zinc-600 flex items-center gap-1"
+                      title="Export filtered results as CSV"
+                    >
+                      <FileDown size={12} />
+                      Export Results
+                    </button>
+                    <button
+                      onClick={downloadChart}
+                      className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors border border-zinc-700 hover:border-zinc-600 flex items-center gap-1"
+                      title="Save chart as PNG image"
+                    >
+                      <Download size={12} />
+                      Save Image
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 min-h-0">
                   <ResponsiveContainer width="100%" height="100%">

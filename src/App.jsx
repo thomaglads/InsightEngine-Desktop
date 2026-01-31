@@ -228,13 +228,26 @@ function App() {
       ).join('\n');
 
       // Inject Context into AI with the new System Prompt including history
-      const systemPrompt = `You are a strict SQL generator. The table name is 'dataset'. THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}. RULES:
+      const systemPrompt = `You are a strict SQL generator for DuckDB.
+The table name is 'dataset'.
+THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}.
+RULES:
 
 Use ONLY the columns listed above.
 
 Return ONLY raw SQL. No markdown.
 
-If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.
+DUCKDB DIALECT ONLY:
+
+Use 'current_date' for today.
+
+Use 'INTERVAL 1 YEAR' for math.
+
+Do NOT use CURDATE(), NOW(), or DATE_SUB().
+
+If a column is a string, use strptime(column, '%m/%d/%Y') or CAST(column AS DATE).
+
+If calculating Age, use date_diff('year', DOB, current_date).
 
 [PREVIOUS CONTEXT]
 ${historyContext}

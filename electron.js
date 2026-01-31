@@ -5,14 +5,15 @@ function createWindow() {
     const win = new BrowserWindow({
         width: 1400,
         height: 900,
-        backgroundColor: '#000000', // Matches your Dark Mode
+        backgroundColor: '#020617', // Matches the 'Slate-950' background
+        autoHideMenuBar: true, // <--- THIS HIDES THE MENU BAR
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
             webSecurity: false
         },
-        // Make sure 'public/logo.png' exists for the icon!
-        icon: path.join(__dirname, 'public/logo.png')
+        icon: path.join(__dirname, 'public/logo.png'),
+        title: "InsightEngine Enterprise"
     });
 
     // Load the built app
@@ -24,4 +25,10 @@ app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+    }
 });

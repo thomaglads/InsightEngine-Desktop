@@ -1,85 +1,120 @@
-import React, { useState, useEffect, useRef } from 'react';
-import DataChart from './components/DataChart';
-// import ollama from 'ollama'; 
-// Use window.require for Electron, or fallback for Browser Dev Mode
-const ollama = window.require ? window.require('ollama') : {
-  chat: async () => ({ message: { content: "Error: Ollama not found. Run in Electron or use a Mock." } })
-};
-
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as duckdb from '@duckdb/duckdb-wasm';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label } from 'recharts';
+import { Folder, Play, Activity, Database, Globe, GripVertical } from 'lucide-react';
 
-let db = null;
-let conn = null;
-
-const initDB = async () => {
-  if (db) return;
-  try {
-    const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
-    const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-    const worker_url = URL.createObjectURL(
-      new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
-    );
-    const worker = new Worker(worker_url);
-    const logger = new duckdb.ConsoleLogger();
-    db = new duckdb.AsyncDuckDB(logger, worker);
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-    conn = await db.connect();
-    console.log("DB Ready");
-  } catch (e) { console.error(e); }
-};
+const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
 function App() {
-  const [input, setInput] = useState('');
+  const [db, setDb] = useState(null);
+  const [conn, setConn] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [chartData, setChartData] = useState(null);
+  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [fileName, setFileName] = useState(null);
-  const [schema, setSchema] = useState('');
+  const [schema, setSchema] = useState(null);
+  const [chartData, setChartData] = useState(null);
+  const [currentFile, setCurrentFile] = useState(null);
+
+  // Resizable Sidebar State
+  const [sidebarWidth, setSidebarWidth] = useState(400);
+  const [isResizing, setIsResizing] = useState(false);
+
   const chatEndRef = useRef(null);
 
   useEffect(() => {
+    const initDB = async () => {
+      const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+      const worker = await duckdb.createWorker(bundle.mainWorker);
+      const logger = new duckdb.ConsoleLogger();
+      const newDb = new duckdb.AsyncDuckDB(logger, worker);
+      await newDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
+      const newConn = await newDb.connect();
+      setDb(newDb);
+      setConn(newConn);
+    };
     initDB();
-    document.documentElement.classList.add('dark');
   }, []);
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    document.title = "InsightEngine Enterprise";
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  // --- FIX 1: SAFETY GUARD + FLUSH MEMORY ---
-  const handleFile = async (file) => {
-    // STOP if file is undefined (Prevents table disappearance)
-    if (!file || !conn) return;
+  const startResizing = useCallback(() => setIsResizing(true), []);
+  const stopResizing = useCallback(() => setIsResizing(false), []);
+  const resize = useCallback((e) => {
+    if (isResizing) {
+      if (e.clientX > 300 && e.clientX < 800) {
+        setSidebarWidth(e.clientX);
+      }
+    }
+  }, [isResizing]);
+
+  useEffect(() => {
+    window.addEventListener("mousemove", resize);
+    window.addEventListener("mouseup", stopResizing);
+    return () => {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [resize, stopResizing]);
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file || !db) return;
     setLoading(true);
-
     try {
-      // 1. CLEANUP: Delete the old table to prevent "Already Exists" error
-      await conn.query("DROP TABLE IF EXISTS dataset;");
-
-      // 2. READ & REGISTER
-      const text = await file.text();
-      const firstLine = text.split('\n')[0];
-      setSchema(firstLine);
-
-      await db.registerFileText(file.name, text);
-
-      // 3. CREATE NEW TABLE
-      await conn.insertCSVFromPath(file.name, {
-        schema: 'main',
-        name: 'dataset',
-        detect: true,
-        header: true
-      });
-
-      setFileName(file.name);
-      setMessages(prev => [...prev, { role: 'system', content: `SWITCHED DATABASE TO: ${file.name}\nCOLUMNS: ${firstLine}` }]);
-
+      await conn.query(`DROP TABLE IF EXISTS dataset;`);
+      await db.registerFileHandle(file.name, file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
+      await conn.query(`CREATE TABLE dataset AS SELECT * FROM '${file.name}';`);
+      const schemaRes = await conn.query(`DESCRIBE dataset;`);
+      const columns = schemaRes.toArray().map(row => row.column_name).join(', ');
+      setSchema(columns);
+      setCurrentFile(file.name);
+      setMessages(prev => [...prev, { role: 'system', content: `LOADED: ${file.name}` }]);
     } catch (err) {
-      console.error(err);
-      setMessages(prev => [...prev, { role: 'error', content: `UPLOAD ERROR: ${err.message}` }]);
+      setMessages(prev => [...prev, { role: 'error', content: `ERROR: ${err.message}` }]);
     }
     setLoading(false);
   };
 
-  // --- UPGRADED HANDLE CHAT WITH ZERO TOLERANCE ---
+  const runQuery = async (sql) => {
+    if (!conn) return;
+    try {
+      const result = await conn.query(sql);
+      const rawData = result.toArray().map(row => {
+        const newRow = {};
+        for (let key in row) {
+          const val = row[key];
+          // Round numbers to 2 decimals for clean display
+          newRow[key] = typeof val === 'bigint' ? Number(val) : (typeof val === 'number' ? Math.round(val * 100) / 100 : val);
+        }
+        return newRow;
+      });
+      if (rawData.length > 0) setChartData(rawData);
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'error', content: `SQL ERROR: ${err.message}` }]);
+    }
+  };
+
+  // Helper to intelligently determine axes
+  const getChartConfig = (data) => {
+    if (!data || data.length === 0) return { xKey: '', dataKey: '' };
+    const keys = Object.keys(data[0]);
+
+    // Find first string key for X-Axis (Category)
+    let xKey = keys.find(k => typeof data[0][k] === 'string');
+    // If no string, take the first key
+    if (!xKey) xKey = keys[0];
+
+    // Find first number key for Data (Value) that isn't the xKey
+    let dataKey = keys.find(k => typeof data[0][k] === 'number' && k !== xKey);
+    // If no number found, default to second key or first
+    if (!dataKey) dataKey = keys.find(k => k !== xKey) || keys[0];
+
+    return { xKey, dataKey };
+  };
+
   const handleChat = async () => {
     if (!input.trim()) return;
     const userText = input;
@@ -88,156 +123,159 @@ function App() {
     setLoading(true);
 
     try {
-      if (userText.startsWith('CHART:')) {
-        const sql = userText.replace('CHART:', '').trim();
-        await runQuery(sql);
-        setLoading(false);
-        return;
-      }
+      const systemPrompt = `You are a SQL generator for DuckDB. 
+      The ONLY table available is 'dataset'. 
+      COLUMNS: ${schema}. 
+      RULES: 
+      1. Use LIMIT, not TOP. 
+      2. Quote columns. 
+      3. Output ONLY SQL code block. 
+      4. DO NOT JOIN other tables. 
+      5. SELECT from 'dataset' ONLY. 
+      6. NO EXPLANATIONS.`;
 
-      // --- FIX: ZERO TOLERANCE SPELLING ---
-      const systemPrompt = `You are a SQL generator for DuckDB.
-      Table: dataset
-      VALID COLUMNS: ${schema}
-      
-      CRITICAL RULES:
-      0. **SPELLING:** You MUST use the exact column names from the list above. Do NOT guess. (e.g. use "Absences", not "Abossees").
-      1. **NEVER use 'TOP()'.** Use 'LIMIT n' at the very end.
-      2. **Column Order:** SELECT the TEXT column FIRST, then the NUMBER.
-      3. **Quoting:** ALWAYS double-quote column names to prevent errors (e.g. "Employee_Name", "Absences").
-      4. **Sorting:** ALWAYS use 'ORDER BY 2 DESC'.
-      5. Output strict SQL only. End with ;`;
-
-      const response = await ollama.chat({
-        model: 'phi3',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userText }
-        ]
+      const response = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'phi3',
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userText }],
+          stream: false
+        })
       });
+      if (!response.ok) throw new Error("Ollama offline.");
+      const data = await response.json();
 
-      let cleanSQL = "";
-      if (response && response.message) {
-        cleanSQL = response.message.content.replace(/```sql/g, '').replace(/```/g, '').trim();
-      } else {
-        throw new Error("Invalid AI Response. Check if Ollama is running.");
-      }
+      const content = data.message.content;
+      const sqlMatch = content.match(/```sql([\s\S]*?)```/);
+      let cleanSQL = sqlMatch ? sqlMatch[1].trim() : content.replace(/```sql|```/g, '').trim();
 
-      // AUTO-CORRECTOR
-      const topMatch = cleanSQL.match(/TOP\(?(\d+)\)?/i);
-      if (topMatch) {
-        const limitNum = topMatch[1];
-        cleanSQL = cleanSQL.replace(/TOP\(?\d+\)?/i, '').replace(/;/, '') + ` LIMIT ${limitNum};`;
-      }
-
-      const selectIndex = cleanSQL.toUpperCase().indexOf('SELECT');
-      if (selectIndex > -1) {
-        cleanSQL = cleanSQL.substring(selectIndex);
-        const semiIndex = cleanSQL.indexOf(';');
-        if (semiIndex > -1) cleanSQL = cleanSQL.substring(0, semiIndex + 1);
-      }
+      if (cleanSQL.toUpperCase().includes('TOP')) cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
 
       setMessages(prev => [...prev, { role: 'assistant', content: cleanSQL }]);
       await runQuery(cleanSQL);
-
     } catch (err) {
       setMessages(prev => [...prev, { role: 'error', content: `AI ERROR: ${err.message}` }]);
     }
     setLoading(false);
   };
 
-  const runQuery = async (sql) => {
-    try {
-      if (!conn) throw new Error("Database not ready");
-      const arrowResult = await conn.query(sql);
-      const result = arrowResult.toArray().map(row => row.toJSON());
-
-      if (result.length === 0) {
-        setMessages(prev => [...prev, { role: 'system', content: "Query returned no data." }]);
-      } else {
-        setChartData(result);
-      }
-    } catch (err) {
-      console.error(err);
-      setMessages(prev => [...prev, { role: 'error', content: `SQL ERROR: ${err.message}` }]);
-    }
-  };
+  const { xKey, dataKey } = chartData ? getChartConfig(chartData) : { xKey: '', dataKey: '' };
 
   return (
-    <div className="flex flex-col h-screen bg-black text-white font-mono selection:bg-white selection:text-black">
-
-      {/* HEADER */}
-      <header className="px-8 py-6 flex items-center gap-4 border-b border-zinc-800">
-        <img src="/logo.png" alt="Logo" className="h-10 w-10 object-contain rounded-full border border-zinc-800" />
-        <div>
-          <h1 className="text-xl font-bold tracking-[0.2em] uppercase">InsightEngine</h1>
-          <div className="text-xs text-zinc-500 uppercase tracking-widest">Enterprise Analytics v1.0</div>
+    <div className={`flex h-screen bg-black text-white font-mono ${isResizing ? 'cursor-col-resize select-none' : ''}`}>
+      <div
+        className="flex flex-col border-r border-zinc-800 bg-black relative flex-shrink-0"
+        style={{ width: sidebarWidth }}
+      >
+        <div
+          className="absolute right-0 top-0 bottom-0 w-1 bg-zinc-900 hover:bg-yellow-600 cursor-col-resize z-50 flex items-center justify-center transition-colors group"
+          onMouseDown={startResizing}
+        >
+          <div className="h-8 w-[2px] bg-zinc-700 group-hover:bg-black rounded-full" />
         </div>
-      </header>
 
-      <div className="flex-1 flex overflow-hidden">
+        <div className="p-6">
+          <label className="group flex flex-col items-center justify-center h-40 border-2 border-dashed border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 hover:bg-zinc-900/50 transition-all">
+            <Folder size={48} className="text-yellow-500 mb-3 group-hover:text-yellow-400 transition-colors" fill="currentColor" fillOpacity={0.2} />
+            <span className="text-sm font-bold text-zinc-400 group-hover:text-white uppercase tracking-wider">Upload Data</span>
+            <input type="file" onChange={handleFileUpload} accept=".csv" className="hidden" />
+          </label>
+        </div>
 
-        {/* SIDEBAR */}
-        <div className="w-[450px] flex flex-col border-r border-zinc-800 bg-zinc-950">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm leading-relaxed">
+          {messages.map((msg, i) => (
+            <div key={i} className={`${msg.role === 'error' ? 'text-red-400' : msg.role === 'user' ? 'text-zinc-300' : 'text-emerald-400'} border-l-2 pl-3 ${msg.role === 'error' ? 'border-red-900' : 'border-zinc-800'}`}>
+              <span className="opacity-50 mr-2 font-bold select-none">
+                {msg.role === 'user' ? '>' : msg.role === 'error' ? '!' : '#'}
+              </span>
+              {msg.content}
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
 
-          <div className="p-6 border-b border-zinc-800">
-            <label className={`block w-full py-8 border-2 border-dashed transition-all cursor-pointer
-               ${fileName ? 'border-green-500 bg-green-500/10' : 'border-zinc-700 hover:border-white hover:bg-zinc-900'}`}>
-              <input type="file" accept=".csv" onChange={(e) => handleFile(e.target.files[0])} className="hidden" />
-              <div className="text-3xl mb-3 text-center">{fileName ? '✅' : '📂'}</div>
-              <div className="text-sm font-bold uppercase tracking-widest text-white text-center">
-                {fileName ? 'System Online' : 'Upload Data'}
+        <div className="p-6 border-t border-zinc-800 bg-black">
+          <div className="flex items-stretch border border-zinc-700 rounded-lg overflow-hidden focus-within:border-white transition-colors h-12">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleChat()}
+              placeholder="Ask a question..."
+              className="flex-1 bg-black px-4 text-base focus:outline-none text-white placeholder-zinc-500"
+            />
+            <button
+              onClick={handleChat}
+              disabled={loading}
+              className="bg-white text-black px-6 text-sm font-bold hover:bg-zinc-200 disabled:opacity-50 tracking-wider"
+            >
+              {loading ? '...' : 'RUN'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 bg-black relative flex flex-col min-w-0">
+        <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-8 text-xs tracking-widest text-zinc-400 uppercase font-bold">
+          <div className="flex items-center gap-3">
+            <Database size={16} />
+            {currentFile || "NO DATABASE MOUNTED"}
+          </div>
+          <div className="flex items-center gap-3">
+            <Activity size={16} className={conn ? "text-emerald-500" : "text-red-500"} />
+            {conn ? "SYSTEM ONLINE" : "OFFLINE"}
+          </div>
+        </div>
+
+        <div className="flex-1 p-8 overflow-hidden">
+          <div className="w-full h-full border border-zinc-800 rounded-2xl bg-zinc-900/30 relative flex flex-col p-4">
+            {!chartData ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 select-none">
+                <Globe size={96} strokeWidth={0.5} className="mb-6 opacity-40 animate-pulse" />
+                <p className="text-sm tracking-[0.3em] font-bold opacity-80 text-zinc-500">VISUALIZATION OFFLINE</p>
               </div>
-              {fileName && <div className="text-xs mt-2 text-green-400 text-center font-bold">SCHEMA DETECTED</div>}
-            </label>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {messages.map((m, i) => (
-              <div key={i} className="animate-fade-in border-b border-zinc-900 pb-4 last:border-0">
-                <div className={`text-[10px] font-bold tracking-widest uppercase mb-2 
-                  ${m.role === 'user' ? 'text-zinc-500' : m.role === 'error' ? 'text-red-500' : 'text-green-500'}`}>
-                  {m.role === 'user' ? 'USER' : m.role === 'error' ? 'ERROR' : 'ENGINE'}
+            ) : (
+              <>
+                {/* DYNAMIC CHART TITLE */}
+                <div className="text-center mb-2">
+                  <h3 className="text-lg font-bold text-white tracking-wide uppercase">
+                    {dataKey} by {xKey}
+                  </h3>
                 </div>
-                <div className={`text-sm leading-relaxed whitespace-pre-wrap 
-                  ${m.role === 'assistant' ? 'text-zinc-400 font-mono text-xs' : m.role === 'error' ? 'text-red-400' : 'text-white'}`}>
-                  {m.content}
+                <div className="flex-1 min-h-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    {chartData.length > 20 ? (
+                      <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                        <CartesianGrid stroke="#333" strokeDasharray="3 3" />
+                        <XAxis dataKey={xKey} stroke="#999" tick={{ fontSize: 12, fill: '#aaa' }}>
+                          <Label value={xKey} offset={0} position="insideBottom" fill="#fff" style={{ fontSize: '14px', fontWeight: 'bold' }} />
+                        </XAxis>
+                        <YAxis stroke="#999" tick={{ fontSize: 12, fill: '#aaa' }}>
+                          <Label value={dataKey} angle={-90} position="insideLeft" fill="#fff" style={{ fontSize: '14px', fontWeight: 'bold' }} />
+                        </YAxis>
+                        <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #555', color: '#fff', fontSize: '14px' }} />
+                        <Line type="monotone" dataKey={dataKey} stroke="#eab308" dot={false} strokeWidth={3} activeDot={{ r: 8 }} />
+                      </LineChart>
+                    ) : (
+                      <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                        <CartesianGrid stroke="#333" strokeDasharray="3 3" />
+                        <XAxis dataKey={xKey} stroke="#999" tick={{ fontSize: 12, fill: '#aaa' }}>
+                          <Label value={xKey} offset={0} position="insideBottom" fill="#fff" style={{ fontSize: '14px', fontWeight: 'bold' }} />
+                        </XAxis>
+                        <YAxis stroke="#999" tick={{ fontSize: 12, fill: '#aaa' }}>
+                          <Label value={dataKey} angle={-90} position="insideLeft" fill="#fff" style={{ fontSize: '14px', fontWeight: 'bold' }} />
+                        </YAxis>
+                        <Tooltip contentStyle={{ backgroundColor: '#000', border: '1px solid #555', color: '#fff', fontSize: '14px' }} />
+                        <Bar dataKey={dataKey} fill="#eab308" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
                 </div>
-              </div>
-            ))}
-            {loading && <div className="text-xs text-green-500 animate-pulse">PROCESSING...</div>}
-            <div ref={chatEndRef} />
-          </div>
-
-          <div className="p-6 border-t border-zinc-800 bg-black">
-            <div className="flex gap-0 border border-zinc-700 focus-within:border-white transition-colors">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleChat()}
-                placeholder="Ask a question..."
-                className="flex-1 bg-transparent p-4 text-white focus:outline-none placeholder-zinc-700"
-              />
-              <button onClick={handleChat} className="bg-white text-black px-6 font-bold hover:bg-zinc-300">RUN</button>
-            </div>
+              </>
+            )}
           </div>
         </div>
-
-        {/* CHART AREA */}
-        <div className="flex-1 bg-black p-10 flex flex-col justify-center items-center relative overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/50 to-black -z-10"></div>
-          {chartData ? (
-            <div className="w-full h-full max-h-[600px] border border-zinc-800 p-6 bg-black/50 backdrop-blur-sm shadow-2xl">
-              <DataChart data={chartData} theme="dark" />
-            </div>
-          ) : (
-            <div className="text-center opacity-30">
-              <div className="text-6xl mb-4 grayscale">🪐</div>
-              <div className="text-sm tracking-[0.3em] font-bold text-zinc-500">VISUALIZATION OFFLINE</div>
-            </div>
-          )}
-        </div>
-
       </div>
     </div>
   );

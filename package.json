@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5173 && cross-env ELECTRON_START_URL=http://localhost:5173 electron .\"",
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.28.0",
+    "lucide-react": "^0.563.0",
     "ollama": "^0.5.0",
     "pyodide": "^0.25.0",
     "react": "^18.2.0",

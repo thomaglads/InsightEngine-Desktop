@@ -247,6 +247,8 @@ To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
 
 If a column is a string, use strptime(column, '%m/%d/%Y') or CAST(column AS DATE).
 
+Do NOT use JOINS unless user asks for multiple tables. This is a single flat table. Use WHERE clauses to filter.
+
 [PREVIOUS CONTEXT]
 ${historyContext}
 [CURRENT REQUEST]`;
@@ -397,6 +399,20 @@ ${historyContext}
               <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 select-none">
                 <Globe size={96} strokeWidth={0.5} className="mb-6 opacity-40 animate-pulse" />
                 <p className="text-sm tracking-[0.3em] font-bold opacity-80 text-zinc-500">VISUALIZATION OFFLINE</p>
+              </div>
+            ) : chartData.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 select-none">
+                <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-lg shadow-[0_0_15px_rgba(0,0,0,0.2)] p-8 text-center">
+                  <span className="text-2xl text-zinc-300 font-bold">No Data Found</span>
+                  <p className="text-sm text-zinc-500 mt-2">Your query returned no results. Try different filters.</p>
+                </div>
+              </div>
+            ) : chartData.length === 1 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 select-none">
+                <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-lg shadow-[0_0_15px_rgba(0,0,0,0.2)] p-8 text-center max-w-md">
+                  <span className="text-3xl font-bold text-yellow-400">{dataKey}</span>
+                  <p className="text-5xl text-white font-mono mt-4">{chartData[0][dataKey]}</p>
+                </div>
               </div>
             ) : (
               <>

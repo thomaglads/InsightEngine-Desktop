@@ -13,6 +13,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [schema, setSchema] = useState(null);
   const [dbSchema, setDbSchema] = useState([]);
+  const [chatHistory, setChatHistory] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
 
@@ -132,14 +133,23 @@ function App() {
     setLoading(true);
 
     try {
-      // Inject Context into AI with the new System Prompt
+      // Build conversation history context (last 3 exchanges)
+      const historyContext = chatHistory.slice(-3).map((exchange, index) => 
+        `Q: ${exchange.question}\nSQL: ${exchange.sql}`
+      ).join('\n');
+
+      // Inject Context into AI with the new System Prompt including history
       const systemPrompt = `You are a strict SQL generator. The table name is 'dataset'. THE AVAILABLE COLUMNS ARE: ${dbSchema.join(', ')}. RULES:
 
 Use ONLY the columns listed above.
 
 Return ONLY raw SQL. No markdown.
 
-If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.`;
+If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.
+
+[PREVIOUS CONTEXT]
+${historyContext}
+[CURRENT REQUEST]`;
 
       const response = await fetch('http://localhost:11434/api/chat', {
         method: 'POST',
@@ -160,7 +170,10 @@ If the user asks 'what is this?', return 'SELECT * FROM dataset LIMIT 5;'.`;
       if (cleanSQL.toUpperCase().includes('TOP')) cleanSQL = cleanSQL.replace(/TOP\s*\(?\d+\)?/i, '') + ' LIMIT 10';
 
       setMessages(prev => [...prev, { text: cleanSQL, sender: 'bot' }]);
+      
+      // Update chat history with new exchange (only if query was successful)
       await runQuery(cleanSQL);
+      setChatHistory(prev => [...prev.slice(-2), { question: userText, sql: cleanSQL }]);
     } catch (err) {
       setMessages(prev => [...prev, { text: `AI ERROR: ${err.message}`, sender: 'bot' }]);
     }

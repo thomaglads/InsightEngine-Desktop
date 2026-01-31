@@ -247,7 +247,11 @@ To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
 
 If a column is a string, use strptime(column, '%m/%d/%Y') or CAST(column AS DATE).
 
-Do NOT use JOINS unless user asks for multiple tables. This is a single flat table. Use WHERE clauses to filter.
+SINGLE TABLE MODE: Assume dataset is a single flat table. Do NOT use JOIN statements. Use WHERE clauses to filter data instead.
+
+If the user asks for the meaning of a value (e.g., "What is 0?"), do NOT apologize. Instead, write a SQL query to inspect the data. Try to find the distinct value and any related text columns that might explain it.
+
+Example Logic: SELECT DISTINCT column_name, other_text_column FROM dataset LIMIT 20;
 
 [PREVIOUS CONTEXT]
 ${historyContext}
@@ -410,8 +414,8 @@ ${historyContext}
             ) : chartData.length === 1 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-zinc-600 select-none">
                 <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-lg shadow-[0_0_15px_rgba(0,0,0,0.2)] p-8 text-center max-w-md">
-                  <span className="text-3xl font-bold text-yellow-400">{dataKey}</span>
-                  <p className="text-5xl text-white font-mono mt-4">{chartData[0][dataKey]}</p>
+                  <span className="text-2xl text-zinc-300 font-bold uppercase tracking-wider">{dataKey}</span>
+                  <p className="text-6xl text-white font-mono mt-4 font-bold">{chartData[0][dataKey]}</p>
                 </div>
               </div>
             ) : (

@@ -241,13 +241,11 @@ DUCKDB DIALECT ONLY:
 
 Use 'current_date' for today.
 
-Use 'INTERVAL 1 YEAR' for math.
+FOR DATE MATH, USE INTERVALS ONLY. Example: current_date - INTERVAL 1 YEAR. DO NOT use DATEADD, DATEDIFF, or DATE_SUB.
 
-Do NOT use CURDATE(), NOW(), or DATE_SUB().
+To calculate Age: (date_part('year', current_date) - date_part('year', DOB)).
 
 If a column is a string, use strptime(column, '%m/%d/%Y') or CAST(column AS DATE).
-
-If calculating Age, use date_diff('year', DOB, current_date).
 
 [PREVIOUS CONTEXT]
 ${historyContext}
@@ -325,41 +323,16 @@ ${historyContext}
                 /* AI Message: Insight Panel - Obsidian Glass */
                 <div className="max-w-[80%] bg-white/5 backdrop-blur-md border border-white/10 rounded-lg shadow-[0_0_15px_rgba(0,0,0,0.2)] p-4">
                   <span className="opacity-50 mr-2 font-bold select-none text-xs text-zinc-400">#</span>
-                  <span className={`font-mono text-sm ${msg.text.includes('SELECT') || /\d/.test(msg.text) ? 'text-zinc-300 font-mono' : 'text-zinc-300 font-sans'}`}>
-                    {(() => {
-                      const text = msg.text;
-                      const parts = [];
-                      let lastIndex = 0;
-                      
-                      // Highlight keywords
-                      const highlightRegex = /(DATASET LOADED|DETECTED COLUMNS|ERROR|AI ERROR|SQL ERROR)/g;
-                      const sqlRegex = /(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|CREATE|TABLE|DROP)/g;
-                      
-                      // Process text for keyword highlighting
-                      let processedText = text;
-                      
-                      // Replace status keywords
-                      processedText = processedText.replace(highlightRegex, (match) => {
-                        parts.push({ type: 'keyword', text: match, className: 'text-yellow-400 font-bold' });
-                        return '';
-                      });
-                      
-                      // Replace SQL keywords
-                      processedText = processedText.replace(sqlRegex, (match) => {
-                        parts.push({ type: 'sql', text: match, className: 'text-emerald-400 font-mono' });
-                        return '';
-                      });
-                      
-                      // Add remaining text
-                      if (processedText) {
-                        parts.push({ type: 'text', text: processedText });
-                      }
-                      
-                      return parts.map((part, index) => (
-                        <span key={index} className={part.className}>{part.text}</span>
-                      ));
-                    })()}
-                  </span>
+                  <span
+                    className={`font-mono text-sm ${msg.text.includes('SELECT') || /\d/.test(msg.text) ? 'text-zinc-300 font-mono' : 'text-zinc-300 font-sans'}`}
+                    dangerouslySetInnerHTML={{
+                      __html: msg.text
+                        // 1. Highlight Status Words (Yellow)
+                        .replace(/(DATASET LOADED|DETECTED COLUMNS|ERROR|AI ERROR|SQL ERROR)/g, '<span class="text-yellow-400 font-bold">$1</span>')
+                        // 2. Highlight SQL Keywords (Green)
+                        .replace(/(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|CREATE|TABLE|DROP)/g, '<span class="text-emerald-400 font-mono">$1</span>')
+                    }}
+                  />
                 </div>
               )}
             </div>

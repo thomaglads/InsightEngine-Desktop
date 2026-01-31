@@ -230,7 +230,7 @@ RULES:
 DUCKDB DIALECT RULES:
 - Use 'current_date' for today.
 - Use 'INTERVAL 1 YEAR' for date math.
-- Do NOT use CURDATE(), NOW(), DATE_SUB(), or DATEADD().
+- Do NOT use CURDATE(), NOW(), DATE_SUB(), or DATEADD(), current_year, or dateCTR.
 - CRITICAL: Date columns are strings in 'MM/DD/YYYY' format.
       * YOU MUST USE: strptime(DateColumn, '%m/%d/%Y')
       * Example: strptime(DateofHire, '%m/%d/%Y') > current_date - INTERVAL 1 YEAR

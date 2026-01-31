@@ -1,4 +1,4 @@
-# InsightEngine Desktop
+# InsightEngine Enterprise
 
 > **The Autonomous, Privacy-First AI Data Analyst for the Enterprise.**
 
@@ -10,7 +10,7 @@
 
 ## 📋 Executive Summary
 
-**InsightEngine Desktop** is a secure, autonomous AI analytics platform designed to resolve the critical conflict between **AI productivity** and **Data Sovereignty**.
+**InsightEngine Enterprise** is a secure, autonomous AI analytics platform designed to resolve the critical conflict between **AI productivity** and **Data Sovereignty**.
 
 As enterprises increasingly restrict cloud-based AI (e.g., ChatGPT Enterprise, Copilot) due to data leakage risks, employees are left without modern tools. InsightEngine bridges this gap by deploying an autonomous "AI Data Analyst" directly onto the user's device. By processing all data locally—leveraging embedded analytics (**DuckDB**) and on-device inference (**Ollama**)—we deliver the intelligence of a Large Language Model with the security profile of a strictly offline spreadsheet.
 

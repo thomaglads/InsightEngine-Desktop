@@ -1,4 +1,4 @@
-# InsightEngine v1.0: Engineering Manifest 🛠️
+# InsightEngine Enterprise v1.0: Engineering Manifest 🛠️
 
 ## 1. Architecture Overview: The "Dual-Core" Design 🧠
 InsightEngine represents a paradigm shift in data analytics: **Zero-Trust, Local-First Intelligence**. Instead of sending data to the cloud, we bring the AI models to the data.

@@ -292,13 +292,63 @@ ${historyContext}
           </label>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 text-sm leading-relaxed">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {loading && (
+            <div className="px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-1 bg-gradient-to-r from-yellow-600/50 via-yellow-400 to-yellow-600/50 rounded-full animate-pulse shadow-[0_0_15px_rgba(250,204,21,0.3)]"></div>
+                <span className="text-xs text-zinc-500 font-mono uppercase tracking-widest">Data Crunching...</span>
+              </div>
+            </div>
+          )}
           {messages.map((msg, i) => (
-            <div key={i} className={`${msg.sender === 'user' ? 'text-zinc-300' : 'text-emerald-400'} border-l-2 pl-3 ${msg.sender === 'user' ? 'border-zinc-800' : 'border-zinc-900'}`}>
-              <span className="opacity-50 mr-2 font-bold select-none">
-                {msg.sender === 'user' ? '>' : '#'}
-              </span>
-              {msg.text}
+            <div key={i} className={msg.sender === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              {msg.sender === 'user' ? (
+                /* User Message: Command Pill */
+                <div className="max-w-[80%] px-4 py-2 bg-gradient-to-b from-zinc-700 to-zinc-800 rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-zinc-600/50">
+                  <span className="text-white font-sans font-bold text-sm">{msg.text}</span>
+                </div>
+              ) : (
+                /* AI Message: Insight Panel - Obsidian Glass */
+                <div className="max-w-[80%] bg-white/5 backdrop-blur-md border border-white/10 rounded-lg shadow-[0_0_15px_rgba(0,0,0,0.2)] p-4">
+                  <span className="opacity-50 mr-2 font-bold select-none text-xs text-zinc-400">#</span>
+                  <span className={`font-mono text-sm ${msg.text.includes('SELECT') || /\d/.test(msg.text) ? 'text-zinc-300 font-mono' : 'text-zinc-300 font-sans'}`}>
+                    {(() => {
+                      const text = msg.text;
+                      const parts = [];
+                      let lastIndex = 0;
+                      
+                      // Highlight keywords
+                      const highlightRegex = /(DATASET LOADED|DETECTED COLUMNS|ERROR|AI ERROR|SQL ERROR)/g;
+                      const sqlRegex = /(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|CREATE|TABLE|DROP)/g;
+                      
+                      // Process text for keyword highlighting
+                      let processedText = text;
+                      
+                      // Replace status keywords
+                      processedText = processedText.replace(highlightRegex, (match) => {
+                        parts.push({ type: 'keyword', text: match, className: 'text-yellow-400 font-bold' });
+                        return '';
+                      });
+                      
+                      // Replace SQL keywords
+                      processedText = processedText.replace(sqlRegex, (match) => {
+                        parts.push({ type: 'sql', text: match, className: 'text-emerald-400 font-mono' });
+                        return '';
+                      });
+                      
+                      // Add remaining text
+                      if (processedText) {
+                        parts.push({ type: 'text', text: processedText });
+                      }
+                      
+                      return parts.map((part, index) => (
+                        <span key={index} className={part.className}>{part.text}</span>
+                      ));
+                    })()}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
           <div ref={chatEndRef} />
@@ -337,7 +387,7 @@ ${historyContext}
               disabled={loading}
               className="bg-white text-black px-6 text-sm font-bold hover:bg-zinc-200 disabled:opacity-50 tracking-wider"
             >
-              {loading ? '...' : 'RUN'}
+              RUN
             </button>
           </div>
         </div>

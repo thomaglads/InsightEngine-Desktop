@@ -1,5 +1,8 @@
 {
   "name": "insight-engine",
+  "productName": "InsightEngine Enterprise",
+  "description": "The Autonomous, Privacy-First AI Data Analyst for the Enterprise.",
+  "author": "InsightEngine",
   "private": true,
   "version": "1.0.0",
   "main": "electron.js",

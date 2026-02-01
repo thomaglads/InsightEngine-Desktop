@@ -151,23 +151,36 @@ function App() {
       const numericCols = dbSchema.filter(col =>
         !col.toLowerCase().includes('id') &&
         !col.toLowerCase().includes('date') &&
-        !col.toLowerCase().includes('year')
+        !col.toLowerCase().includes('year') &&
+        !col.toLowerCase().includes('zip') &&
+        !col.toLowerCase().includes('phone')
       );
-      // Prefer Sales, Profit, Amount, Cost
-      const valueCol = numericCols.find(c => ['sales', 'profit', 'amount', 'revenue', 'cost'].some(k => c.toLowerCase().includes(k))) || numericCols[0];
+
+      // Strict Priority for Value Column
+      let valueCol = null;
+      const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost'];
+      for (const p of priorities) {
+        const found = numericCols.find(c => c.toLowerCase().includes(p));
+        if (found) {
+          valueCol = found;
+          break;
+        }
+      }
+      if (!valueCol) valueCol = numericCols[0];
 
       const dateCol = dbSchema.find(c => ['date', 'time', 'year', 'month'].some(k => c.toLowerCase().includes(k))) || 'Order Date';
       const catCol = dbSchema.find(c => ['category', 'region', 'segment', 'product'].some(k => c.toLowerCase().includes(k))) || 'Category';
 
       if (!valueCol) throw new Error("Could not identify a value column for analysis.");
 
-      // 2. Run TOTAL KPI Query
-      // Calculate Total and Average
-      const kpiSql = `SELECT SUM("${valueCol}") as total, AVG("${valueCol}") as avg FROM dataset;`;
+      // 2. Run TOTAL KPI Query (and Count)
+      // Calculate Total, Average, and Count properly
+      const kpiSql = `SELECT SUM("${valueCol}") as total, AVG("${valueCol}") as avg, COUNT(*) as count FROM dataset;`;
       const kpiRes = await conn.query(kpiSql);
       const kpiRow = kpiRes.toArray()[0];
       const total = kpiRow.total;
       const avg = kpiRow.avg;
+      const count = kpiRow.count;
 
       // 3. Run TREND Query (for chart)
       // Group by Date (or simple index if no date)
@@ -205,7 +218,7 @@ function App() {
       Total ${valueCol}: ${total}
       Average ${valueCol}: ${avg}
       Top Performer: ${topDrivers[0]?.name} (${topDrivers[0]?.value})
-      
+
       Write a strict 3-sentence Executive Summary of the business performance. Sound professional, decisive, and insightful.`;
 
       const response = await fetch('http://localhost:11434/api/chat', {
@@ -226,9 +239,8 @@ function App() {
         kpis: [
           { label: `Total ${valueCol}`, value: Math.round(total).toLocaleString(), trend: 'up', delta: '+12%' },
           { label: `Avg ${valueCol}`, value: Math.round(avg).toLocaleString(), trend: 'down', delta: '-2%' },
-          { label: 'Active Records', value: kpiRes.numRows || 'N/A', trend: 'up', delta: '0%' } // numRows might not be directly available on result, check API. 
-          // Actually result.totalRowCount? Let's mock the 3rd KPI for now as "Data Health"
-          // Better: Use top driver share
+          // Use the ACTUAL count we queried
+          { label: 'Active Records', value: Number(count).toLocaleString(), trend: 'up', delta: '100%' }
         ],
         chartData: chartData,
         topDrivers: topDrivers,

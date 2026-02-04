@@ -12,7 +12,7 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
             {/* HEADER - No Print */}
             <style>{`
                   @media print {
-                    @page { margin: 0; size: auto; }
+                    @page { margin: 10mm; size: auto; }
                     body { visibility: hidden; }
                     .print-content { 
                       visibility: visible; 
@@ -20,10 +20,11 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                       left: 0; 
                       top: 0; 
                       width: 100%; 
-                      height: 100%; 
+                      height: auto !important;
+                      min-height: 100%;
                       overflow: visible !important;
                       margin: 0 !important;
-                      padding: 20px !important;
+                      padding: 0 !important;
                       background: white !important;
                       color: black !important;
                       z-index: 9999;
@@ -37,6 +38,12 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                     .print-content div { display: block; }
                     .print-content .grid { display: grid; }
                     .print-content .flex { display: flex; }
+                    
+                    /* Page Break Helpers */
+                    .break-inside-avoid {
+                        break-inside: avoid;
+                        page-break-inside: avoid;
+                    }
                   }
                 `}</style>
             <div className="flex items-center justify-between p-6 border-b border-zinc-200 no-print">
@@ -66,7 +73,7 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                 {/* 2. KPI CARDS */}
                 <div className="grid grid-cols-3 gap-8">
                     {data.kpis.map((kpi, i) => (
-                        <div key={i} className="p-6 bg-zinc-50 border border-zinc-200 rounded-lg print:border-black">
+                        <div key={i} className="p-6 bg-zinc-50 border border-zinc-200 rounded-lg print:border-black break-inside-avoid">
                             <span className="text-xs font-bold uppercase tracking-widest text-zinc-500">{kpi.label}</span>
                             <div className="text-4xl font-bold mt-2 font-mono tracking-tighter">{kpi.value}</div>
                             <div className={`text-sm font-bold mt-2 flex items-center gap-1 ${kpi.trend === 'up' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -86,8 +93,8 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                 </div>
 
                 {/* 4. KEY CHARTS */}
-                <div className="grid grid-cols-2 gap-8 h-64 print:h-64 break-inside-avoid">
-                    <div className="border border-zinc-200 p-4 rounded bg-white">
+                <div className="grid grid-cols-2 gap-8 h-64 print:h-auto break-inside-avoid">
+                    <div className="border border-zinc-200 p-4 rounded bg-white break-inside-avoid">
                         <h4 className="text-xs font-bold uppercase mb-4 text-zinc-500">Performance Trend</h4>
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={data.chartData}>
@@ -127,6 +134,5 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
 
             </div>
         </div>
-        </div >
     );
 };

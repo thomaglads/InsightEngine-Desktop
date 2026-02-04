@@ -32,10 +32,15 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                        color: black !important;
                        z-index: 9999;
                      }
-                     /* Hide everything else */
-                     div:not(.print-content):not(.print-content *) {
-                       display: none !important;
-                     }
+                      /* Hide everything else using visibility instead of display */
+                      /* display: none removes elements entirely; visibility: hidden keeps structure */
+                      div:not(.print-content):not(.print-content *) {
+                        visibility: hidden !important;
+                      }
+                      /* Ensure the print-content container itself stays visible */
+                      .print-content, .print-content * {
+                        visibility: visible !important;
+                      }
                      /* Restore flex/grid inside print content */
                      .print-content div { display: block !important; }
                      .print-content .grid { display: grid !important; }

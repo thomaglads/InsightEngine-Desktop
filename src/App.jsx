@@ -4,12 +4,14 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { Folder, Play, Activity, Database, Globe, GripVertical, Download, FileDown, Eye, EyeOff } from 'lucide-react';
 import { CustomTooltip } from './components/ChartComponents';
 import { ExecutiveReport } from './components/ExecutiveReport';
+import IntelligentSQLGenerator from './services/intelligentSQLGenerator';
 
 const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
 function App() {
   const [db, setDb] = useState(null);
   const [conn, setConn] = useState(null);
+  const [sqlGenerator, setSqlGenerator] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -44,6 +46,11 @@ function App() {
       const newDb = new duckdb.AsyncDuckDB(logger, worker);
       await newDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
       const newConn = await newDb.connect();
+      
+      // Initialize intelligent SQL generator
+      const generator = new IntelligentSQLGenerator(newConn);
+      setSqlGenerator(generator);
+      
       setDb(newDb);
       setConn(newConn);
     };
@@ -93,6 +100,11 @@ function App() {
       setSchema(columns);
       setCurrentFile(file.name);
 
+      // Initialize intelligent SQL generator with new schema
+      if (sqlGenerator) {
+        await sqlGenerator.initialize('dataset');
+      }
+
       // User Notification with detected columns
       setMessages(prev => [...prev, { text: `DATASET LOADED. Detected Columns: [${columnNames.join(', ')}]`, sender: 'bot' }]);
 
@@ -106,6 +118,16 @@ function App() {
 
   const generateSmartSuggestions = async (columnNames) => {
     try {
+      // Use intelligent SQL generator for context-aware suggestions
+      if (sqlGenerator && sqlGenerator.schemaAnalysis) {
+        const intelligentSuggestions = sqlGenerator.generateSuggestions();
+        if (intelligentSuggestions.length > 0) {
+          setSuggestions(intelligentSuggestions);
+          return;
+        }
+      }
+      
+      // Fallback to AI-based suggestions
       const suggestionPrompt = `You are a Data Assistant. The available columns are: ${columnNames.join(', ')}. Generate 3 distinct, simple business questions a non-technical user might ask about this data.
       RULES:
       1. Format: JSON Array only.
@@ -450,22 +472,30 @@ ${historyContext}
   };
 
   const handleChat = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || !sqlGenerator) return;
     const userText = input;
     setInput('');
     setMessages(prev => [...prev, { text: userText, sender: 'user' }]);
     setLoading(true);
 
     try {
-      // Build conversation history context (last 3 exchanges)
-      const historyContext = chatHistory.slice(-3).map((exchange, index) =>
-        `Q: ${exchange.question}\nSQL: ${exchange.sql}`
-      ).join('\n');
-
-      // Generate clean SQL
-      const cleanSQL = await generateQuery(historyContext, userText);
-
-      setMessages(prev => [...prev, { text: cleanSQL, sender: 'bot' }]);
+      // Use intelligent SQL generator with type introspection
+      const result = await sqlGenerator.generateQuery(userText, { chatHistory });
+      
+      const cleanSQL = result.sql;
+      const confidence = result.confidence;
+      const warnings = result.warnings;
+      
+      // Display SQL with warnings if any
+      let messageText = cleanSQL;
+      if (warnings.length > 0) {
+        messageText += `\n\n⚠️ Warnings: ${warnings.join(', ')}`;
+      }
+      if (confidence < 0.8) {
+        messageText += `\n\nℹ️ Confidence: ${Math.round(confidence * 100)}%`;
+      }
+      
+      setMessages(prev => [...prev, { text: messageText, sender: 'bot' }]);
 
       // Update chat history with the new exchange (only if query was successful)
       await runQuery(cleanSQL);

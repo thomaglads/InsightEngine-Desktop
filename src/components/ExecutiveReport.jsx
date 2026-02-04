@@ -11,24 +11,42 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
             {/* HEADER - No Print */}
             <style>{`
-                  @media print {
-                    @page { margin: 10mm; size: auto; }
-                    body { visibility: hidden; }
-                    .print-content { 
-                      visibility: visible; 
-                      position: absolute; 
-                      left: 0; 
-                      top: 0; 
-                      width: 100%; 
-                      height: auto !important;
-                      min-height: 100%;
-                      overflow: visible !important;
-                      margin: 0 !important;
-                      padding: 0 !important;
-                      background: white !important;
-                      color: black !important;
-                      z-index: 9999;
-                    }
+                   @media print {
+                     @page { margin: 10mm; size: auto; }
+                     body { 
+                       visibility: hidden; 
+                       background: white !important;
+                     }
+                     .print-content { 
+                       visibility: visible !important; 
+                       position: absolute; 
+                       left: 0; 
+                       top: 0; 
+                       width: 100%; 
+                       height: auto !important;
+                       min-height: 100%;
+                       overflow: visible !important;
+                       margin: 0 !important;
+                       padding: 0 !important;
+                       background: white !important;
+                       color: black !important;
+                       z-index: 9999;
+                     }
+                     /* Hide everything else */
+                     div:not(.print-content):not(.print-content *) {
+                       display: none !important;
+                     }
+                     /* Restore flex/grid inside print content */
+                     .print-content div { display: block !important; }
+                     .print-content .grid { display: grid !important; }
+                     .print-content .flex { display: flex !important; }
+                     
+                     /* Page Break Helpers */
+                     .break-inside-avoid {
+                         break-inside: avoid;
+                         page-break-inside: avoid;
+                     }
+                   }
                     .no-print { display: none !important; }
                     /* Hide everything else */
                     div:not(.print-content):not(.print-content *) {

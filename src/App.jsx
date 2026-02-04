@@ -156,9 +156,13 @@ function App() {
         !col.toLowerCase().includes('phone')
       );
 
-      // Strict Priority for Value Column
+      if (numericCols.length === 0) {
+        throw new Error('No numeric columns found for analysis. Please ensure your data contains at least one numeric field (Sales, Revenue, Salary, etc.).');
+      }
+
+      // Strict Priority for Value Column - Look for obvious numeric columns
       let valueCol = null;
-      const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost'];
+      const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost', 'salary', 'quantity'];
       for (const p of priorities) {
         const found = numericCols.find(c => c.toLowerCase().includes(p));
         if (found) {
@@ -166,7 +170,33 @@ function App() {
           break;
         }
       }
-      if (!valueCol) valueCol = numericCols[0];
+      
+      // If no obvious column found, try to detect salary/common numeric columns
+      if (!valueCol) {
+        const salaryTerms = ['salary', 'wage', 'pay', 'compensation'];
+        for (const term of salaryTerms) {
+          const found = numericCols.find(c => c.toLowerCase().includes(term));
+          if (found) {
+            valueCol = found;
+            break;
+          }
+        }
+      }
+      
+      // Final fallback - use the first numeric column that's likely to be a value
+      if (!valueCol) {
+        // Avoid obvious ID or count columns
+        const fallbackCols = numericCols.filter(col => 
+          !col.toLowerCase().includes('id') && 
+          !col.toLowerCase().includes('count') &&
+          !col.toLowerCase().includes('num')
+        );
+        valueCol = fallbackCols[0];
+      }
+      
+      if (!valueCol) {
+        throw new Error('Could not identify a suitable numeric column for analysis. Found numeric columns: ' + numericCols.join(', '));
+      }
 
       const dateCol = dbSchema.find(c => ['date', 'time', 'year', 'month'].some(k => c.toLowerCase().includes(k))) || 'Order Date';
       const catCol = dbSchema.find(c => ['category', 'region', 'segment', 'product'].some(k => c.toLowerCase().includes(k))) || 'Category';

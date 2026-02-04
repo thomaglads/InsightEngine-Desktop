@@ -169,22 +169,24 @@ function App() {
     setIsGeneratingReport(true);
 
     try {
-      // 1. Identify Key Columns (Heuristics)
-      const numericCols = dbSchema.filter(col =>
-        !col.toLowerCase().includes('id') &&
-        !col.toLowerCase().includes('date') &&
-        !col.toLowerCase().includes('year') &&
-        !col.toLowerCase().includes('zip') &&
-        !col.toLowerCase().includes('phone')
-      );
-
+      // CRITICAL FIX: Query DuckDB for ACTUAL column types, don't guess by name
+      // Use PRAGMA table_info to get real data types from the database
+      const tableInfoResult = await conn.query('PRAGMA table_info(dataset)');
+      const tableInfo = tableInfoResult.toArray();
+      
+      // Filter columns that are ACTUALLY numeric in the database
+      const numericTypes = ['INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'DOUBLE', 'REAL', 'FLOAT', 'DECIMAL', 'NUMERIC'];
+      const numericCols = tableInfo
+        .filter(col => numericTypes.includes(col.type.toUpperCase()))
+        .map(col => col.name);
+      
       if (numericCols.length === 0) {
-        throw new Error('No numeric columns found for analysis. Please ensure your data contains at least one numeric field (Sales, Revenue, Salary, etc.).');
+        throw new Error('No numeric columns found in dataset. DuckDB reports all columns as non-numeric types. Please ensure your CSV contains numeric data (not text like "$100,000" or "High/Low").');
       }
-
-      // Strict Priority for Value Column - Look for obvious numeric columns
+      
+      // Now from the ACTUALLY numeric columns, pick the best one by name
       let valueCol = null;
-      const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost', 'salary', 'quantity'];
+      const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost', 'salary', 'quantity', 'value'];
       for (const p of priorities) {
         const found = numericCols.find(c => c.toLowerCase().includes(p));
         if (found) {
@@ -193,35 +195,21 @@ function App() {
         }
       }
       
-      // If no obvious column found, try to detect salary/common numeric columns
+      // If no priority match, use first numeric column that's not an ID
       if (!valueCol) {
-        const salaryTerms = ['salary', 'wage', 'pay', 'compensation'];
-        for (const term of salaryTerms) {
-          const found = numericCols.find(c => c.toLowerCase().includes(term));
-          if (found) {
-            valueCol = found;
-            break;
-          }
-        }
-      }
-      
-      // Final fallback - use the first numeric column that's likely to be a value
-      if (!valueCol) {
-        // Avoid obvious ID or count columns
-        const fallbackCols = numericCols.filter(col => 
+        valueCol = numericCols.find(col => 
           !col.toLowerCase().includes('id') && 
-          !col.toLowerCase().includes('count') &&
-          !col.toLowerCase().includes('num')
-        );
-        valueCol = fallbackCols[0];
+          !col.toLowerCase().includes('_id')
+        ) || numericCols[0];
       }
       
       if (!valueCol) {
-        throw new Error('Could not identify a suitable numeric column for analysis. Found numeric columns: ' + numericCols.join(', '));
+        throw new Error(`Could not identify a suitable numeric column. Database reports these numeric columns: ${numericCols.join(', ')}`);
       }
-
-      const dateCol = dbSchema.find(c => ['date', 'time', 'year', 'month'].some(k => c.toLowerCase().includes(k))) || 'Order Date';
-      const catCol = dbSchema.find(c => ['category', 'region', 'segment', 'product'].some(k => c.toLowerCase().includes(k))) || 'Category';
+      
+      // For date and category columns, we can use name heuristics since they're for grouping only
+      const dateCol = dbSchema.find(c => ['date', 'time', 'year', 'month'].some(k => c.toLowerCase().includes(k))) || null;
+      const catCol = dbSchema.find(c => ['category', 'region', 'segment', 'product', 'department'].some(k => c.toLowerCase().includes(k))) || null;
 
       if (!valueCol) throw new Error("Could not identify a value column for analysis.");
 
@@ -235,35 +223,46 @@ function App() {
       const count = kpiRow.count;
 
       // 3. Run TREND Query (for chart)
-      // Group by Date (or simple index if no date)
-      // Use strftime if dateCol exists, else just limit
-      let trendSql = `SELECT "${dateCol}", SUM("${valueCol}") as value FROM dataset GROUP BY "${dateCol}" ORDER BY "${dateCol}" LIMIT 50;`;
-      if (dateCol.toLowerCase().includes('date')) {
-        // Try to format by Month if possible, otherwise raw
-        trendSql = `SELECT strftime(strptime("${dateCol}", '%m/%d/%Y'), '%Y-%m') as name, SUM("${valueCol}") as value FROM dataset GROUP BY name ORDER BY name;`;
-      }
-
-      // Fallback if strftime fails (catch block logic usually, but here we try/catch specifically?)
-      // For safety, let's use a simpler aggregation if simple group by fails.
-      // Actually, let's use the SAFE trend query.
       let chartData = [];
-      try {
-        const trendRes = await conn.query(trendSql);
-        chartData = trendRes.toArray().map(r => ({ name: r.name ? String(r.name) : 'Unknown', value: Number(r.value) }));
-      } catch (e) {
-        // Fallback: Just select top 50 rows
+      if (dateCol) {
+        try {
+          let trendSql = `SELECT "${dateCol}", SUM("${valueCol}") as value FROM dataset GROUP BY "${dateCol}" ORDER BY "${dateCol}" LIMIT 50;`;
+          if (dateCol.toLowerCase().includes('date')) {
+            trendSql = `SELECT strftime(strptime("${dateCol}", '%m/%d/%Y'), '%Y-%m') as name, SUM("${valueCol}") as value FROM dataset GROUP BY name ORDER BY name;`;
+          }
+          const trendRes = await conn.query(trendSql);
+          chartData = trendRes.toArray().map(r => ({ name: r.name ? String(r.name) : 'Unknown', value: Number(r.value) }));
+        } catch (e) {
+          // Fallback: Just select top 50 rows with index
+          const simpleLimit = `SELECT "${valueCol}" as value FROM dataset LIMIT 50;`;
+          const simpleRes = await conn.query(simpleLimit);
+          chartData = simpleRes.toArray().map((r, i) => ({ name: i, value: Number(r.value) }));
+        }
+      } else {
+        // No date column - use simple index
         const simpleLimit = `SELECT "${valueCol}" as value FROM dataset LIMIT 50;`;
         const simpleRes = await conn.query(simpleLimit);
         chartData = simpleRes.toArray().map((r, i) => ({ name: i, value: Number(r.value) }));
       }
 
       // 4. Run TOP DRIVERS Query
-      const driversSql = `SELECT "${catCol}" as name, SUM("${valueCol}") as value FROM dataset GROUP BY "${catCol}" ORDER BY value DESC LIMIT 5;`;
-      const driversRes = await conn.query(driversSql);
-      const topDrivers = driversRes.toArray().map(r => ({
-        name: String(r.name),
-        value: typeof r.value === 'number' ? Math.round(r.value).toLocaleString() : r.value
-      }));
+      let topDrivers = [];
+      if (catCol) {
+        try {
+          const driversSql = `SELECT "${catCol}" as name, SUM("${valueCol}") as value FROM dataset GROUP BY "${catCol}" ORDER BY value DESC LIMIT 5;`;
+          const driversRes = await conn.query(driversSql);
+          topDrivers = driversRes.toArray().map(r => ({
+            name: String(r.name),
+            value: typeof r.value === 'number' ? Math.round(r.value).toLocaleString() : r.value
+          }));
+        } catch (e) {
+          // If grouping fails, use simple top values
+          topDrivers = [{ name: 'Total', value: Math.round(total).toLocaleString() }];
+        }
+      } else {
+        // No category column - just show total
+        topDrivers = [{ name: 'Total', value: Math.round(total).toLocaleString() }];
+      }
 
       // 5. Generate AI Summary
       const summaryPrompt = `You are a CEO. Analyze this data summary:

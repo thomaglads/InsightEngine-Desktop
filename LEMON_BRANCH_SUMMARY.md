@@ -198,3 +198,43 @@ npm run test:coverage
 5. **Prepare for production deployment** with proper signing and distribution
 
 The lemon branch successfully addresses all immediate security and code quality concerns identified in the product engineering review, making the application production-ready for enterprise deployment.
+
+---
+
+## 🚀 **Mission: Rocket Lemon Soda (Agentic Architecture)**
+**Active Branch:** `rocket-lemon-soda`
+
+This branch transforms InsightEngine from a "Query Generator" into a "Knowledge Agent" that understands context and data values.
+
+### **Features Implemented**
+1.  **Discovery Service:**
+    *   Scans every uploaded CSV.
+    *   Detects Entity Types (Person, Location, Date).
+    *   Indexes "Top 50" values for ambiguity resolution.
+2.  **Contextual Memory:**
+    *   Remembers the last 5 turns of conversation.
+    *   Resolves pronouns ("Show *his* sales" -> "Show *Joe's* sales").
+    *   Resets automatically on new file upload (Privacy First).
+3.  **ReAct Pattern (Reason + Act):**
+    *   The AI "Thinks" (checks metadata) before it "Acts" (writes SQL).
+    *   Injects known values into the prompt to prevent hallucinations.
+4.  **Clarification UI:**
+    *   Detects ambiguous requests (e.g., "Show me Joe" when Joe is in 2 columns).
+    *   Asks clarifying questions with clickable "Command Pills".
+
+### **How to Resume Work**
+If you close the terminal or return later, follow these steps:
+
+1.  **Switch to the Agent Branch:**
+    ```powershell
+    git checkout rocket-lemon-soda
+    ```
+2.  **Start the App:**
+    ```powershell
+    npm run electron:dev
+    ```
+3.  **Verify Agent Status:**
+    *   Upload `test_ambiguity.csv` (or any data).
+    *   Ask "Show me [Value]" and see if it responds with context.
+
+**Current State:** Fully implemented & Tested. Ready for Beta.

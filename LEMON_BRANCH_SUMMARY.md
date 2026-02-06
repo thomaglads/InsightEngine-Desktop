@@ -242,3 +242,29 @@ If you close the terminal or return later, follow these steps:
     *   Ask "Show me [Value]" and see if it responds with context.
 
 **Current State:** Fully implemented & Tested. Ready for Beta.
+
+## 🚨 **Emergency Resilience Patches (Fixed)**
+The following critical issues were identified and fixed in the `rocket-lemon-soda` branch:
+
+1. **BigInt Serialization Crash:** 
+   - **Issue:** DuckDB-WASM returns `BigInt` (e.g., `44n`) for counts, crashing `JSON.stringify`.
+   - **Fix:** Added global `BigInt.prototype.toJSON` patch in `main.jsx` and explicit casting in `discoveryService.js`.
+
+2. **Root Renderer Crash (White Screen):**
+   - **Issue:** Pyodide initialization blocked the main thread on boot.
+   - **Fix:** Moved Pyodide loading to a lazy `setTimeout` (2s delay) in `App.jsx`.
+
+3. **React Error #31 (Event Object Crash):**
+   - **Issue:** `handleChat` was accidentally accepting Click Events as text messages.
+   - **Fix:** Added strict type checking `typeof === 'string'` in `handleChat`.
+
+4. **DuckDB SQL Generation Errors:**
+   - **Issue:** `Binder Error` due to using Double Quotes for values (`"Value"`) instead of Single Quotes (`'Value'`).
+   - **Fix:** Updated System Prompt to enforce strict SQL quoting rules (Double Quotes for Identifiers, Single for Literals).
+
+5. **Blank PDF Output:**
+   - **Issue:** `visibility: hidden` caused layout issues in print mode.
+   - **Fix:** Refactored CSS to use `display: none` / `display: block` strategy.
+
+---
+**Status:** ✅ All Critical bugs resolved. Build passing. Code pushed.

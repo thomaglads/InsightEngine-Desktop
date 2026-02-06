@@ -1,4 +1,5 @@
 import { CONFIG } from '../config/constants.js';
+import { sanitizeDuckDBRows } from '../utils/bigintUtils.js';
 
 /**
  * Discovery Service - Data Sampling and Entity Detection
@@ -23,7 +24,8 @@ export class DiscoveryService {
     try {
       // Get row count to decide sampling strategy
       const countResult = await this.conn.query(`SELECT COUNT(*) as count FROM ${tableName}`);
-      const rowCount = Number(countResult.toArray()[0].count);
+      const countRows = sanitizeDuckDBRows(countResult.toArray());
+      const rowCount = Number(countRows[0].count);
 
       // Get schema
       const schemaResult = await this.conn.query(`PRAGMA table_info(${tableName})`);
@@ -72,81 +74,84 @@ export class DiscoveryService {
     let uniqueValues = [];
 
     try {
-      if (totalRows <= 1000) {
-        // Small dataset: analyze entire column
-        const result = await this.conn.query(`
+      if (isText) { // Only sample text for unique values
+        if (totalRows <= 1000) {
+          // Small dataset: analyze entire column
+          const result = await this.conn.query(`
+            SELECT "${columnName}" as value, COUNT(*) as freq
+            FROM ${tableName}
+            WHERE "${columnName}" IS NOT NULL AND "${columnName}" != ''
+            GROUP BY "${columnName}"
+            ORDER BY freq DESC
+            LIMIT ${this.maxUniqueValues}
+          `);
+          const rows = sanitizeDuckDBRows(result.toArray());
+          uniqueValues = rows.map(row => ({
+            value: String(row.value),
+            frequency: Number(row.freq)
+          }));
+        } else {
+          // Large dataset: stratified sample
+          // Sample first 500, middle 500, last 500
+          const offset1 = 0;
+          const offset2 = Math.floor(totalRows / 2) - 250;
+          const offset3 = totalRows - 500;
+
+          const result = await this.conn.query(`
           SELECT "${columnName}" as value, COUNT(*) as freq
-          FROM ${tableName}
+          FROM (
+            (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset1})
+            UNION ALL
+            (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset2})
+            UNION ALL
+            (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset3})
+          ) as sample
           WHERE "${columnName}" IS NOT NULL AND "${columnName}" != ''
           GROUP BY "${columnName}"
           ORDER BY freq DESC
           LIMIT ${this.maxUniqueValues}
         `);
-        uniqueValues = result.toArray().map(row => ({
-          value: typeof row.value === 'bigint' ? row.value.toString() : row.value,
-          frequency: Number(row.freq)
-        }));
-      } else {
-      // Large dataset: stratified sample
-      // Sample first 500, middle 500, last 500
-      const offset1 = 0;
-      const offset2 = Math.floor(totalRows / 2) - 250;
-      const offset3 = totalRows - 500;
-
-      const result = await this.conn.query(`
-        SELECT "${columnName}" as value, COUNT(*) as freq
-        FROM (
-          (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset1})
-          UNION ALL
-          (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset2})
-          UNION ALL
-          (SELECT "${columnName}" FROM ${tableName} LIMIT 500 OFFSET ${offset3})
-        ) as sample
-        WHERE "${columnName}" IS NOT NULL AND "${columnName}" != ''
-        GROUP BY "${columnName}"
-        ORDER BY freq DESC
-        LIMIT ${this.maxUniqueValues}
-      `);
-      uniqueValues = result.toArray().map(row => ({
-        value: typeof row.value === 'bigint' ? row.value.toString() : row.value,
-        frequency: Number(row.freq)
-      }));
-    }
-
-    // Get basic statistics
-    let stats = {};
-    if (isNumeric) {
-      try {
-        const statsResult = await this.conn.query(`
-          SELECT 
-            COUNT("${columnName}") as count,
-            MIN("${columnName}") as min,
-            MAX("${columnName}") as max,
-            AVG("${columnName}") as avg
-          FROM ${tableName}
-        `);
-        stats = statsResult.toArray()[0];
-      } catch (statsError) {
-        console.warn(`Failed to get statistics for column ${columnName}:`, statsError.message);
-        stats = { count: 0, min: null, max: null, avg: null };
+          const rows = sanitizeDuckDBRows(result.toArray());
+          uniqueValues = rows.map(row => ({
+            value: String(row.value),
+            frequency: Number(row.freq)
+          }));
+        }
       }
-    }
 
-    return {
-      name: columnName,
-      type: columnInfo.type,
-      isText,
-      isNumeric,
-      uniqueValues: uniqueValues.length,
-      topValues: uniqueValues.slice(0, this.maxUniqueValues),
-      sampleCoverage: totalRows <= 1000 ? 100 : Math.round((1500 / totalRows) * 100),
-      statistics: isNumeric ? stats : null,
-      cardinality: uniqueValues.length / totalRows,
-      hasHighCardinality: uniqueValues.length > 50
-    };
+      // Get basic statistics
+      let stats = {};
+      if (isNumeric) {
+        try {
+          const statsResult = await this.conn.query(`
+              SELECT 
+                COUNT("${columnName}") as count,
+                MIN("${columnName}") as min,
+                MAX("${columnName}") as max,
+                AVG("${columnName}") as avg
+              FROM ${tableName}
+            `);
+          stats = statsResult.toArray()[0];
+        } catch (statsError) {
+          console.warn(`Failed to get statistics for column ${columnName}:`, statsError.message);
+          stats = { count: 0, min: null, max: null, avg: null };
+        }
+      }
+
+      return {
+        name: columnName,
+        type: columnInfo.type,
+        isText,
+        isNumeric,
+        uniqueValues: uniqueValues.length,
+        topValues: uniqueValues.slice(0, this.maxUniqueValues),
+        sampleCoverage: totalRows <= 1000 ? 100 : Math.round((1500 / totalRows) * 100),
+        statistics: isNumeric ? stats : null,
+        cardinality: uniqueValues.length / totalRows,
+        hasHighCardinality: uniqueValues.length > 50
+      };
     } catch (error) {
       console.error(`Discovery failed for column ${columnName}:`, error.message);
-      // Return safe defaults
       return {
         name: columnName,
         type: columnInfo.type,
@@ -161,6 +166,48 @@ export class DiscoveryService {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Detect relationships between multiple tables (Foreign Key Heuristics)
+   * @param {Array} tables - Array of table metadata objects
+   * @returns {Array} - List of potential relationships { sourceTable, targetTable, key }
+   */
+  detectRelationships(tables) {
+    const relationships = [];
+    if (!tables || tables.length < 2) return relationships;
+
+    // Scan for shared column names that look like IDs
+    for (let i = 0; i < tables.length; i++) {
+      const tableA = tables[i];
+      for (let j = i + 1; j < tables.length; j++) {
+        const tableB = tables[j];
+
+        // Find intersecting columns
+        const intersection = Object.keys(tableA.columns).filter(col =>
+          Object.keys(tableB.columns).includes(col)
+        );
+
+        intersection.forEach(colName => {
+          // Heuristic: Must be an ID or Key
+          const lowerCol = colName.toLowerCase();
+          const isKey = lowerCol.includes('id') || lowerCol.includes('key') || lowerCol.includes('code');
+
+          // Heuristic: Must have same data type
+          const typeMatch = tableA.columns[colName].type === tableB.columns[colName].type;
+
+          if (isKey && typeMatch) {
+            relationships.push({
+              source: tableA.name,
+              target: tableB.name,
+              key: colName,
+              confidence: 'high'
+            });
+          }
+        });
+      }
+    }
+    return relationships;
   }
 
   /**

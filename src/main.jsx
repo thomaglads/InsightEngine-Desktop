@@ -4,9 +4,13 @@ import './index.css'
 import App from './App.jsx'
 import { initializeSentry } from './services/sentry.js'
 import { CONSTANTS } from './config/constants'
+import { initializeBigIntSupport } from './utils/bigintUtils.js'
 
-// EMERGENCY FIX 1: Global BigInt Patch
-// Prevents "Do not know how to serialize a BigInt" crashes during JSON.stringify
+// EMERGENCY FIX 1: Enhanced BigInt Support
+// Comprehensive BigInt handling for DuckDB-WASM compatibility
+initializeBigIntSupport();
+
+// Fallback BigInt patch for edge cases
 BigInt.prototype.toJSON = function () { return Number(this) };
 
 // EMERGENCY FIX 2: Initial State Sanity

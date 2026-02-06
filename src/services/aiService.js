@@ -275,8 +275,21 @@ VISUAL_HINT GUIDE:
    * @returns {Object} Parsed response with thought, action, payload, visual_hint
    */
   parseReActResponse(content) {
+    // EMERGENCY FIX: Handle empty or malformed responses gracefully
     if (!content || content.trim() === '') {
-      throw new Error('Empty response from AI');
+      console.warn('AI returned empty response, providing fallback');
+      return {
+        thought: 'AI service returned empty response. Please try rephrasing your question.',
+        action: 'CLARIFY',
+        payload: {
+          message: 'The AI service encountered an issue. Please try rephrasing your question or check if Ollama is running.',
+          options: [
+            { label: 'Try again', value: 'retry' },
+            { label: 'Check connection', value: 'check_connection' }
+          ]
+        },
+        visual_hint: 'none'
+      };
     }
 
     // SAFETY PATCH: Strip all markdown formatting before parsing
@@ -288,6 +301,24 @@ VISUAL_HINT GUIDE:
       .replace(/```\n?/g, '');
 
     const lines = cleanedContent.split('\n').map(line => line.trim()).filter(line => line);
+    
+    // EMERGENCY FIX: Check if we have any ReAct structure at all
+    const hasReActStructure = lines.some(line => 
+      line.startsWith('THOUGHT:') || 
+      line.startsWith('ACTION:') || 
+      line.startsWith('PAYLOAD:') || 
+      line.startsWith('VISUAL_HINT:')
+    );
+    
+    if (!hasReActStructure) {
+      console.warn('AI response missing ReAct structure, providing fallback:', content);
+      return {
+        thought: 'The AI service returned an unexpected response format. Attempting to extract useful information.',
+        action: 'SQL',
+        payload: 'SELECT 1 as placeholder, "Error: Unexpected AI response format" as message LIMIT 1;',
+        visual_hint: 'table'
+      };
+    }
 
     let thought = '';
     let action = 'SQL';
@@ -335,6 +366,20 @@ VISUAL_HINT GUIDE:
       thought = sectionBuffer.join(' ');
     } else if (currentSection === 'payload') {
       payload = sectionBuffer.join(' ');
+    }
+
+    // EMERGENCY FIX: Validate required fields
+    if (!action || !payload) {
+      console.warn('Incomplete ReAct response, providing fallback', { thought, action, payload });
+      return {
+        thought: thought || 'The AI response was incomplete. Please try again.',
+        action: 'CLARIFY',
+        payload: {
+          message: 'The AI service provided an incomplete response. Please try rephrasing your question.',
+          options: [{ label: 'Try again', value: 'retry' }]
+        },
+        visual_hint: 'none'
+      };
     }
 
     // Clean up payload based on action
@@ -492,20 +537,44 @@ VISUAL_HINT GUIDE:
    * @param {Object} data - Request data
    * @returns {Promise<Object>} Response data
    */
-  async makeRequest(endpoint, data) {
-    const response = await fetch(`${this.baseUrl}/api/${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data)
-    });
+  async makeRequest(endpoint, data, timeout = 30000) {
+    // EMERGENCY FIX: Add timeout and retry mechanism
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    if (!response.ok) {
-      throw new Error(`Ollama API Error: ${response.status} ${response.statusText}`);
+    try {
+      const response = await fetch(`${this.baseUrl}/api/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Ollama API Error: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      // Validate response structure
+      if (!result || !result.message) {
+        throw new Error('Invalid response format from Ollama');
+      }
+
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (error.name === 'AbortError') {
+        throw new Error(`AI request timed out after ${timeout}ms. Please check if Ollama is running.`);
+      }
+      
+      throw error;
     }
-
-    return await response.json();
   }
 
   /**

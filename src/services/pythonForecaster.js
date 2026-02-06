@@ -18,24 +18,61 @@ export class PythonForecaster {
     if (this.isInitialized) return;
 
     try {
-      // Dynamically import pyodide
-      const { loadPyodide } = await import('pyodide');
+      console.log('Starting Pyodide initialization (this may take a moment)...');
       
-      // Load Pyodide with local package index
-      this.pyodide = await loadPyodide({
-        indexURL: '/pyodide/',  // Load from local public/pyodide folder
-        fullStdLib: false  // Minimize initial load
-      });
+      // EMERGENCY FIX: Add timeout and progressive loading
+      const initPromise = this._doInitialize();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Pyodide initialization timeout')), 45000)
+      );
 
-      // Load essential packages
-      await this.loadPackage('pandas');
-      await this.loadPackage('numpy');
-      await this.loadPackage('scikit-learn');
+      await Promise.race([initPromise, timeoutPromise]);
       
       this.isInitialized = true;
       console.log('Pyodide (The Scientist) initialized successfully');
     } catch (error) {
       console.error('Failed to initialize Pyodide:', error);
+      this.isInitialized = false;
+      // Don't throw error, just mark as unavailable
+      console.warn('Python analysis features will be disabled');
+    }
+  }
+
+  /**
+   * Internal initialization method with progressive loading
+   * @private
+   */
+  async _doInitialize() {
+    // EMERGENCY FIX: Progressive loading with user feedback
+    try {
+      // Step 1: Load core Pyodide
+      console.log('Loading Pyodide core...');
+      const { loadPyodide } = await import('pyodide');
+      
+      // Step 2: Initialize with minimal config
+      console.log('Initializing Pyodide runtime...');
+      this.pyodide = await loadPyodide({
+        indexURL: '/pyodide/',
+        fullStdLib: false,
+        jsglobals: true
+      });
+
+      // Step 3: Load packages progressively with status updates
+      console.log('Loading Python packages...');
+      const packages = ['pandas', 'numpy', 'scikit-learn'];
+      
+      for (const pkg of packages) {
+        try {
+          console.log(`Loading ${pkg}...`);
+          await this.loadPackage(pkg);
+          console.log(`✓ ${pkg} loaded`);
+        } catch (pkgError) {
+          console.warn(`Failed to load ${pkg}:`, pkgError);
+          // Continue with other packages
+        }
+      }
+      
+    } catch (error) {
       throw new Error(`Pyodide initialization failed: ${error.message}`);
     }
   }
@@ -65,8 +102,15 @@ export class PythonForecaster {
    * @returns {Promise<Object>} Execution result with type, result, and visualization data
    */
   async execute(pythonCode, data, metadata = {}) {
+    // EMERGENCY FIX: Check availability without blocking
     if (!this.isInitialized) {
-      await this.initialize();
+      console.warn('Python engine not initialized, skipping execution');
+      return {
+        success: false,
+        type: 'error',
+        error: 'Python engine not available. Please wait a moment and try again.',
+        explanation: 'The Python analysis engine is still loading in the background.'
+      };
     }
 
     try {

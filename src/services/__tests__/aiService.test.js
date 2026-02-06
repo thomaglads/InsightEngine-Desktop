@@ -81,11 +81,17 @@ VISUAL_HINT: kpi`;
     });
 
     it('should handle empty responses gracefully', async () => {
-      mockOllamaResponse('');
-
-      await expect(
-        aiService.generateSQLQuery('Some question', testContext)
-      ).rejects.toThrow('Failed to generate query');
+      // Mock the fetch to return empty response
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ message: { content: '' } })
+      });
+      
+      const result = await aiService.generateSQLQuery('Some question', testContext);
+      expect(result.action).toBe('CLARIFY');
+      expect(result.thought).toContain('empty response');
     });
 
     it('should handle API errors', async () => {
@@ -212,12 +218,16 @@ VISUAL_HINT: table`;
       expect(result.thought).toContain('Third line');
     });
 
-    it('should throw on empty response', () => {
-      expect(() => aiService.parseReActResponse('')).toThrow('Empty response from AI');
+    it('should handle empty response with fallback', () => {
+      const result = aiService.parseReActResponse('');
+      expect(result.action).toBe('CLARIFY');
+      expect(result.thought).toContain('empty response');
     });
 
-    it('should throw on null response', () => {
-      expect(() => aiService.parseReActResponse(null)).toThrow('Empty response from AI');
+    it('should handle null response with fallback', () => {
+      const result = aiService.parseReActResponse(null);
+      expect(result.action).toBe('CLARIFY');
+      expect(result.thought).toContain('empty response');
     });
   });
 

@@ -86,6 +86,8 @@ export const createMockFile = (name = 'test.csv', content = 'header1,header2\nva
 export const mockOllamaResponse = (content) => {
   global.fetch.mockResolvedValueOnce({
     ok: true,
+    status: 200,
+    statusText: 'OK',
     json: async () => ({
       message: { content }
     })

@@ -152,6 +152,10 @@ UNIVERSAL DATA HEURISTICS:
    * @returns {string} Sanitized SQL
    */
   sanitizeSQL(sql) {
+    if (!sql || sql.trim() === '') {
+      throw new Error('Failed to generate SQL query');
+    }
+    
     let cleanSQL = sql
       .replace(/```sql|```/g, '')
       .trim();

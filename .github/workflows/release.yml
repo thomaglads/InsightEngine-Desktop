@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  test:
+    name: Pre-release Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm run test:coverage
+      
+      - name: Run linter
+        run: npm run lint
+
+  build-and-sign:
+    name: Build & Sign (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+          - os: ubuntu-latest
+            platform: linux
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      # Windows Code Signing
+      - name: Setup Windows Certificate
+        if: matrix.platform == 'win'
+        run: |
+          echo "${{ secrets.WINDOWS_CERTIFICATE }}" | base64 -d > certificate.p12
+        shell: bash
+      
+      # macOS Code Signing
+      - name: Setup macOS Certificate
+        if: matrix.platform == 'mac'
+        run: |
+          echo "${{ secrets.MACOS_CERTIFICATE }}" | base64 -d > certificate.p12
+          security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+          security import certificate.p12 -k build.keychain -P "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+      
+      - name: Build Electron App
+        run: npm run electron:build
+        env:
+          # Windows signing
+          WIN_CSC_LINK: ${{ matrix.platform == 'win' && './certificate.p12' || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # macOS signing
+          CSC_LINK: ${{ matrix.platform == 'mac' && './certificate.p12' || '' }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.platform == 'mac' && 'true' || 'false' }}
+          # Notarization
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: insight-engine-${{ matrix.platform }}
+          path: |
+            dist_electron/*.exe
+            dist_electron/*.dmg
+            dist_electron/*.zip
+            dist_electron/*.AppImage
+            dist_electron/*.deb
+            dist_electron/*.rpm
+          if-no-files-found: ignore
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-and-sign
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: insight-engine-*
+      
+      - name: Display artifacts
+        run: ls -R artifacts
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: artifacts/**/*
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## InsightEngine Enterprise Release
+            
+            ### Installation
+            - **Windows**: Download `.exe` installer or portable version
+            - **macOS**: Download `.dmg` for Intel/Apple Silicon or `.zip` for portable
+            - **Linux**: Download `.AppImage` (universal), `.deb` (Debian/Ubuntu), or `.rpm` (Fedora/RHEL)
+            
+            ### Verification
+            All binaries are code-signed for security. Windows and macOS builds are signed with official certificates.
+            
+            ### System Requirements
+            - Windows 10/11 (x64/ARM64)
+            - macOS 11+ (Intel/Apple Silicon)
+            - Linux (x64/ARM64) with glibc 2.31+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -23,8 +23,9 @@ export class IntelligentSQLGenerator {
 
   /**
    * Generate SQL query from natural language with ZERO errors
+   * Uses ReAct pattern with discovery context and conversation history
    * @param {string} question - User's natural language question
-   * @param {Object} context - Conversation context
+   * @param {Object} context - Enhanced context with discovery and conversation
    * @returns {Promise<Object>} Generated SQL and metadata
    */
   async generateQuery(question, context = {}) {
@@ -33,30 +34,39 @@ export class IntelligentSQLGenerator {
     }
 
     try {
-      // Parse the question to understand intent
-      const intent = this.parseQuestionIntent(question);
+      // ReAct Pattern: THINK
+      // Incorporate discovery metadata and conversation history
+      const enhancedIntent = this.parseQuestionIntentWithContext(question, context);
       
-      // Select appropriate columns based on intent
-      const columnSelection = this.selectColumnsForQuery(intent);
+      // ReAct Pattern: ACT
+      // Use discovery to find specific entities mentioned
+      if (context.targetEntity) {
+        enhancedIntent.targetEntity = context.targetEntity;
+        enhancedIntent.hasSpecificFilter = true;
+      }
+      
+      // Select appropriate columns with context awareness
+      const columnSelection = this.selectColumnsForQuery(enhancedIntent, context);
       
       // Validate column types before generating SQL
       const validatedColumns = this.validateColumnTypes(columnSelection);
       
-      // Generate SQL based on validated columns
-      const sql = this.buildSQLQuery(intent, validatedColumns, context);
+      // ReAct Pattern: EXECUTE
+      // Generate SQL based on validated columns and context
+      const sql = this.buildSQLQuery(enhancedIntent, validatedColumns, context);
       
       // Validate generated SQL
       const validation = await this.validateSQL(sql);
       
       if (!validation.valid) {
         // Fallback to safe query if validation fails
-        const fallbackSQL = this.generateFallbackQuery(intent);
+        const fallbackSQL = this.generateFallbackQuery(enhancedIntent);
         return {
           sql: fallbackSQL,
           confidence: 0.6,
           warnings: validation.errors,
           metadata: {
-            intent: intent,
+            intent: enhancedIntent,
             columns: validatedColumns,
             fallback: true
           }
@@ -68,7 +78,7 @@ export class IntelligentSQLGenerator {
         confidence: 0.95,
         warnings: [],
         metadata: {
-          intent: intent,
+          intent: enhancedIntent,
           columns: validatedColumns,
           fallback: false
         }
@@ -86,6 +96,34 @@ export class IntelligentSQLGenerator {
         }
       };
     }
+  }
+  
+  /**
+   * Parse question intent with discovery context (ReAct THINK step)
+   */
+  parseQuestionIntentWithContext(question, context) {
+    const baseIntent = this.parseQuestionIntent(question);
+    
+    // Enhance with discovery context
+    if (context.discovery) {
+      // If user mentions an entity type, prioritize columns of that type
+      const entityTypes = ['person', 'location', 'category', 'product', 'date'];
+      for (const entityType of entityTypes) {
+        if (question.toLowerCase().includes(entityType) || 
+            context.discovery.entities[entityType]) {
+          baseIntent.preferredEntityType = entityType;
+          baseIntent.entityColumns = context.discovery.entities[entityType] || [];
+        }
+      }
+    }
+    
+    // Enhance with conversation context
+    if (context.conversationContext) {
+      baseIntent.hasConversationContext = true;
+      baseIntent.previousColumns = context.previousColumns || [];
+    }
+    
+    return baseIntent;
   }
 
   /**
@@ -378,9 +416,24 @@ export class IntelligentSQLGenerator {
 
   /**
    * Build WHERE clause for filters
+   * Enhanced with ReAct pattern - handles specific entity filtering
    */
   buildWhereClause(intent, columns) {
     const conditions = [];
+    
+    // ReAct: Handle specific entity filter (e.g., "Joe's sales")
+    if (intent.hasSpecificFilter && intent.targetEntity) {
+      const entityCol = intent.targetEntity.column;
+      const entityValue = intent.targetEntity.value;
+      
+      // Build the WHERE condition for the specific entity
+      if (entityValue) {
+        conditions.push(`"${entityCol}" = '${entityValue}'`);
+      } else {
+        // If exact value not known, use LIKE for partial match
+        conditions.push(`"${entityCol}" LIKE '%${intent.targetEntity.searchTerm}%'`);
+      }
+    }
     
     // Handle top/bottom filters
     if (intent.filters.includes('top_n') && columns.value) {

@@ -70,9 +70,33 @@ export const CONFIG = {
 
   // Performance configuration
   PERFORMANCE: {
-    CHART_MAX_POINTS: 1000,
-    DEBOUNCE_DELAY: 300,
-    MEMORY_CLEANUP_THRESHOLD: 100
+    // Chart optimization
+    CHART_MAX_POINTS: 100, // Maximum points to render for performance
+    CHART_SAMPLING_THRESHOLD: 200, // When to start sampling data
+    
+    // Pagination
+    DEFAULT_PAGE_SIZE: 100, // Default rows per page
+    MAX_PAGE_SIZE: 1000, // Maximum rows per page
+    
+    // Data table
+    VIRTUAL_SCROLL_THRESHOLD: 100, // When to enable virtual scrolling
+    
+    // Debouncing
+    DEBOUNCE_DELAY: 300, // Input debounce delay
+    SEARCH_DEBOUNCE: 150, // Search input debounce
+    
+    // Memory management
+    MEMORY_CLEANUP_THRESHOLD: 100, // Cleanup after X operations
+    CACHE_TTL: 5 * 60 * 1000, // Cache TTL in ms (5 minutes)
+    MAX_CACHED_QUERIES: 50, // Maximum cached queries
+    
+    // Monitoring
+    MONITORING_ENABLED: true,
+    SLOW_QUERY_THRESHOLD: 1000, // Log queries slower than this (ms)
+    
+    // Animation
+    ENABLE_ANIMATIONS: true,
+    ANIMATION_MAX_POINTS: 200 // Disable animations above this threshold
   },
 
   // Development configuration

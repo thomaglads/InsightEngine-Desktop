@@ -3,6 +3,41 @@ const path = require('path');
 const fs = require('fs').promises;
 const { exec } = require('child_process');
 
+// Initialize Sentry for crash reporting
+const Sentry = require('@sentry/electron/main');
+
+if (process.env.SENTRY_DSN && process.env.NODE_ENV === 'production') {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'production',
+    release: `InsightEngine@${app.getVersion()}`,
+    
+    // IPC tracking
+    ipcMode: Sentry.IPCMode.Both,
+    
+    // Performance monitoring
+    tracesSampleRate: 0.1,
+    
+    // Before send filter
+    beforeSend(event) {
+      // Filter out PII from paths
+      if (event.exception && event.exception.values) {
+        event.exception.values.forEach(value => {
+          if (value.stacktrace && value.stacktrace.frames) {
+            value.stacktrace.frames.forEach(frame => {
+              if (frame.filename) {
+                frame.filename = frame.filename.replace(/\/Users\/[^/]+/g, '/Users/<user>');
+                frame.filename = frame.filename.replace(/C:\\Users\\[^\\]+/g, 'C:\\Users\\<user>');
+              }
+            });
+          }
+        });
+      }
+      return event;
+    }
+  });
+}
+
 // Security: Set application name for security policies
 app.name = 'InsightEngine Enterprise';
 

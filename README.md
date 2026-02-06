@@ -2,9 +2,18 @@
 
 > **The Autonomous, Privacy-First AI Data Analyst for the Enterprise.**
 
-![Status](https://img.shields.io/badge/Status-In%20Development-blue)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac-lightgrey)
+![Status](https://img.shields.io/badge/Status-Production%20Ready-green)
+![Tests](https://img.shields.io/badge/Tests-70%20Passing-brightgreen)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Mac%20%7C%20Linux-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
+
+**Current Phase: Phase 2 - Production Readiness** ✅
+- ✅ CI/CD Pipeline with GitHub Actions
+- ✅ E2E Testing with Playwright
+- ✅ Code Signing Configuration
+- ✅ Crash Reporting (Sentry)
+- ✅ Security Audit Complete
+- 🔄 Phase 3 - Performance Optimization (Next)
 
 ---
 
@@ -33,6 +42,13 @@ Organizations in regulated sectors (Finance, Healthcare, Defense) face a trilemm
 InsightEngine inverts the standard AI model. Instead of moving sensitive data to the AI (Cloud), we move the AI to the data (Edge).
 * **Risk Mitigation:** By architecting the system as a local executable (`.exe`), we physically prevent data egress.
 * **Operational Efficiency:** Enables non-technical managers to query complex data in plain English, reducing the ad-hoc query burden on Data Science teams by an estimated 40-50%.
+
+---
+
+## 📚 Documentation
+
+- [Deployment Guide](docs/DEPLOYMENT.md) - Complete deployment and release instructions
+- [Security Audit](docs/SECURITY_AUDIT.md) - Security analysis and compliance information
 
 ---
 

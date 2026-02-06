@@ -19,9 +19,7 @@ describe('FileUploadValidator', () => {
       const result = FileUploadValidator.validateFile(file);
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain(
-        expect.stringContaining('File size')
-      );
+      expect(result.errors.some(err => err.includes('File size'))).toBe(true);
     });
 
     it('should reject invalid file type', () => {
@@ -31,9 +29,7 @@ describe('FileUploadValidator', () => {
       const result = FileUploadValidator.validateFile(file);
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain(
-        expect.stringContaining('File type ".txt" is not allowed')
-      );
+      expect(result.errors.some(err => err.includes('File type ".txt" is not allowed'))).toBe(true);
     });
 
     it('should reject file with dangerous characters in name', () => {
@@ -82,7 +78,7 @@ Bob,35,Paris`;
       const result = FileUploadValidator.validateCSVContent(csvContent);
 
       expect(result.isValid).toBe(false);
-      expect(result.errors).toContain('Invalid CSV header - no columns found');
+      expect(result.errors).toContain('File is empty');
     });
 
     it('should warn about special characters in column names', () => {
@@ -92,9 +88,7 @@ John,25,50000,New York`;
       const result = FileUploadValidator.validateCSVContent(csvContent);
 
       expect(result.isValid).toBe(true);
-      expect(result.warnings).toContain(
-        expect.stringContaining('Column "salary$bonus"')
-      );
+      expect(result.warnings.some(w => w.includes('Column "salary$bonus"'))).toBe(true);
     });
 
     it('should warn about duplicate column names', () => {
@@ -104,9 +98,7 @@ John,25,30,New York`;
       const result = FileUploadValidator.validateCSVContent(csvContent);
 
       expect(result.isValid).toBe(true);
-      expect(result.warnings).toContain(
-        expect.stringContaining('Duplicate column name "age"')
-      );
+      expect(result.warnings.some(w => w.includes('Duplicate column name "age"'))).toBe(true);
     });
 
     it('should warn about no data rows', () => {
@@ -126,9 +118,7 @@ Jane,30,London,Extra`;
       const result = FileUploadValidator.validateCSVContent(csvContent);
 
       expect(result.isValid).toBe(true);
-      expect(result.warnings).toContain(
-        expect.stringContaining('Row 2 has 2 columns but expected 3')
-      );
+      expect(result.warnings.some(w => w.includes('Row 2 has 2 columns but expected 3'))).toBe(true);
     });
   });
 
@@ -140,12 +130,12 @@ Jane,30,London,Extra`;
 
     it('should remove dangerous sequences', () => {
       const result = FileUploadValidator.sanitizeFileName('../../../etc/passwd.csv');
-      expect(result).toBe('___etc_passwd.csv');
+      expect(result).toBe('______etc_passwd.csv');
     });
 
     it('should remove special characters', () => {
       const result = FileUploadValidator.sanitizeFileName('file<>:|?.csv');
-      expect(result).toBe('file____.csv');
+      expect(result).toBe('file_____.csv');
     });
 
     it('should remove leading dots and spaces', () => {

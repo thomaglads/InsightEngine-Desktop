@@ -45,7 +45,7 @@ export class FileUploadValidator {
 
     try {
       const lines = content.split('\n').filter(line => line.trim());
-      
+
       // Check if file is empty
       if (lines.length === 0) {
         result.isValid = false;
@@ -55,7 +55,7 @@ export class FileUploadValidator {
 
       // Validate header
       const header = lines[0].split(',').map(col => col.trim().replace(/"/g, ''));
-      
+
       if (header.length === 0 || (header.length === 1 && header[0] === '')) {
         result.isValid = false;
         result.errors.push('Invalid CSV header - no columns found');
@@ -67,7 +67,7 @@ export class FileUploadValidator {
         if (!CONFIG.SECURITY.VALIDATION_PATTERNS.CSV_HEADER.test(column)) {
           result.warnings.push(`Column "${column}" at position ${index + 1} contains special characters that may cause issues`);
         }
-        
+
         // Check for duplicate column names
         const duplicates = header.filter(col => col === column);
         if (duplicates.length > 1) {
@@ -83,10 +83,10 @@ export class FileUploadValidator {
       // Validate data consistency
       if (lines.length > 1) {
         const expectedColumns = header.length;
-        
+
         for (let i = 1; i < Math.min(lines.length, 6); i++) { // Check first 5 data rows
           const row = lines[i].split(',').map(col => col.trim().replace(/"/g, ''));
-          
+
           if (row.length !== expectedColumns) {
             result.warnings.push(`Row ${i + 1} has ${row.length} columns but expected ${expectedColumns}`);
           }
@@ -137,10 +137,10 @@ export class FileUploadValidator {
   static detectDelimiter(content) {
     const firstLine = content.split('\n')[0];
     const delimiters = [',', ';', '\t'];
-    
+
     let bestDelimiter = ',';
     let maxCount = 0;
-    
+
     delimiters.forEach(delimiter => {
       const count = (firstLine.match(new RegExp('\\' + delimiter, 'g')) || []).length;
       if (count > maxCount) {
@@ -148,7 +148,7 @@ export class FileUploadValidator {
         bestDelimiter = delimiter;
       }
     });
-    
+
     return bestDelimiter;
   }
 
@@ -178,7 +178,7 @@ export class CSVAnalyzer {
   static analyze(content) {
     const lines = content.split('\n').filter(line => line.trim());
     const header = lines[0].split(',').map(col => col.trim().replace(/"/g, ''));
-    
+
     const analysis = {
       columns: header,
       columnCount: header.length,
@@ -199,7 +199,7 @@ export class CSVAnalyzer {
    */
   static inferSchema(lines, header) {
     const schema = [];
-    
+
     header.forEach((column, index) => {
       const columnInfo = {
         name: column,
@@ -218,7 +218,7 @@ export class CSVAnalyzer {
       for (let i = 1; i <= sampleSize; i++) {
         const row = lines[i]?.split(',').map(col => col.trim().replace(/"/g, ''));
         const value = row?.[index];
-        
+
         if (!value || value === '') {
           nullCount++;
           continue;
@@ -226,8 +226,8 @@ export class CSVAnalyzer {
 
         values.add(value);
 
-        // Check if numeric
-        if (!isNaN(value) && !isNaN(parseFloat(value))) {
+        // Check if numeric (Safely handle BigInt)
+        if (typeof value === 'bigint' || (!isNaN(value) && !isNaN(parseFloat(value)))) {
           numericCount++;
         }
 
@@ -275,7 +275,7 @@ export class CSVAnalyzer {
 
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split(',').map(col => col.trim().replace(/"/g, ''));
-      
+
       // Count empty cells
       row.forEach(cell => {
         if (!cell || cell === '') {

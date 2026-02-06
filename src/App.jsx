@@ -5,6 +5,8 @@ import { Folder, Play, Activity, Database, Globe, GripVertical, Download, FileDo
 import { CustomTooltip } from './components/ChartComponents';
 import { ExecutiveReport } from './components/ExecutiveReport';
 import IntelligentSQLGenerator from './services/intelligentSQLGenerator';
+import DiscoveryService from './services/discoveryService';
+import ConversationMemory from './services/conversationMemory';
 
 const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
@@ -12,6 +14,8 @@ function App() {
   const [db, setDb] = useState(null);
   const [conn, setConn] = useState(null);
   const [sqlGenerator, setSqlGenerator] = useState(null);
+  const [discoveryService, setDiscoveryService] = useState(null);
+  const [conversationMemory, setConversationMemory] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,6 +25,11 @@ function App() {
   const [suggestions, setSuggestions] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
+  
+  // Agent Architecture State
+  const [awaitingClarification, setAwaitingClarification] = useState(false);
+  const [clarificationOptions, setClarificationOptions] = useState([]);
+  const [pendingQuery, setPendingQuery] = useState(null);
 
   // Executive Report State
   const [showReport, setShowReport] = useState(false);
@@ -50,6 +59,14 @@ function App() {
       // Initialize intelligent SQL generator
       const generator = new IntelligentSQLGenerator(newConn);
       setSqlGenerator(generator);
+      
+      // Initialize Discovery Service for agent architecture
+      const discovery = new DiscoveryService(newConn);
+      setDiscoveryService(discovery);
+      
+      // Initialize Conversation Memory
+      const memory = new ConversationMemory(5);
+      setConversationMemory(memory);
       
       setDb(newDb);
       setConn(newConn);
@@ -103,6 +120,32 @@ function App() {
       // Initialize intelligent SQL generator with new schema
       if (sqlGenerator) {
         await sqlGenerator.initialize('dataset');
+      }
+      
+      // STEP 3: Clear conversation memory for new file (Fresh Start Rule)
+      if (conversationMemory) {
+        conversationMemory.clear();
+        console.log('Conversation memory cleared for new dataset');
+      }
+      
+      // STEP 1: Run Discovery Service to analyze data
+      if (discoveryService) {
+        setMessages(prev => [...prev, { 
+          text: `🔍 Analyzing dataset structure and values...`, 
+          sender: 'bot' 
+        }]);
+        
+        const discovery = await discoveryService.discover('dataset');
+        
+        // Display discovery summary
+        const entitySummary = Object.entries(discovery.entities)
+          .map(([type, cols]) => `${type}: ${cols.join(', ')}`)
+          .join('\n');
+        
+        setMessages(prev => [...prev, { 
+          text: `✅ Dataset loaded! Found ${discovery.rowCount.toLocaleString()} rows.\n\n📊 Detected entities:\n${entitySummary || 'Processing generic data columns'}`, 
+          sender: 'bot' 
+        }]);
       }
 
       // User Notification with detected columns
@@ -470,16 +513,112 @@ ${historyContext}
     return cleanSQL;
   };
 
-  const handleChat = async () => {
-    if (!input.trim() || !sqlGenerator) return;
-    const userText = input;
-    setInput('');
+  const handleChat = async (clarificationResponse = null) => {
+    if ((!input.trim() && !clarificationResponse) || !sqlGenerator) return;
+    
+    // Handle clarification response
+    let userText;
+    if (clarificationResponse) {
+      userText = clarificationResponse;
+      setAwaitingClarification(false);
+      setClarificationOptions([]);
+    } else {
+      userText = input;
+      setInput('');
+    }
+    
     setMessages(prev => [...prev, { text: userText, sender: 'user' }]);
     setLoading(true);
 
     try {
-      // Use intelligent SQL generator with type introspection
-      const result = await sqlGenerator.generateQuery(userText, { chatHistory });
+      // STEP 2: ReAct Pattern - Reason + Act
+      // THINK: Analyze metadata_cache and conversation history
+      
+      // Resolve pronouns from conversation history
+      let resolvedText = userText;
+      if (conversationMemory) {
+        const pronounResolution = conversationMemory.resolvePronouns(userText);
+        if (pronounResolution.hasPronoun && pronounResolution.resolvedEntity) {
+          resolvedText = pronounResolution.message;
+          console.log('Resolved pronouns:', userText, '→', resolvedText);
+        }
+      }
+      
+      // ACT: Search discovery cache for specific values
+      let entityMatches = [];
+      if (discoveryService) {
+        // Extract potential entity names (capitalized words)
+        const potentialEntities = resolvedText.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
+        
+        for (const entity of potentialEntities) {
+          const matches = discoveryService.searchValue(entity);
+          if (matches.length > 0) {
+            entityMatches = [...entityMatches, ...matches.map(m => ({ ...m, searchTerm: entity }))];
+          }
+        }
+      }
+      
+      // OBSERVE: Check if clarification is needed
+      let clarificationNeeded = false;
+      let clarificationData = null;
+      
+      if (entityMatches.length > 1) {
+        // Multiple matches found - need clarification
+        const uniqueMatches = entityMatches.filter((match, index, self) => 
+          index === self.findIndex(m => m.column === match.column)
+        );
+        
+        if (uniqueMatches.length > 1) {
+          clarificationNeeded = true;
+          clarificationData = {
+            message: `I found "${entityMatches[0].searchTerm}" in multiple columns. Which one do you mean?`,
+            options: uniqueMatches.map(match => ({
+              label: `${match.column} (${match.entityType || 'text'})`,
+              value: match.column,
+              entityType: match.entityType
+            }))
+          };
+        }
+      }
+      
+      // If clarification needed, ask user
+      if (clarificationNeeded && clarificationData) {
+        setAwaitingClarification(true);
+        setClarificationOptions(clarificationData.options);
+        setPendingQuery(userText);
+        
+        setMessages(prev => [...prev, { 
+          text: clarificationData.message,
+          sender: 'bot',
+          isClarification: true,
+          options: clarificationData.options
+        }]);
+        
+        setLoading(false);
+        return;
+      }
+      
+      // EXECUTE: Build enhanced context with ReAct reasoning
+      let enhancedContext = { chatHistory };
+      
+      // Add discovery context
+      if (discoveryService && discoveryService.metadataCache) {
+        const discoverySummary = discoveryService.getAISummary();
+        enhancedContext.discovery = discoverySummary;
+        
+        // If entity match found, add to context
+        if (entityMatches.length === 1) {
+          enhancedContext.targetEntity = entityMatches[0];
+        }
+      }
+      
+      // Add conversation history context
+      if (conversationMemory) {
+        enhancedContext.conversationContext = conversationMemory.getHistoryForPrompt();
+      }
+      
+      // Generate query with enhanced context
+      const result = await sqlGenerator.generateQuery(resolvedText, enhancedContext);
       
       const cleanSQL = result.sql;
       const confidence = result.confidence;
@@ -496,13 +635,32 @@ ${historyContext}
       
       setMessages(prev => [...prev, { text: messageText, sender: 'bot' }]);
 
-      // Update chat history with the new exchange (only if query was successful)
+      // Update conversation memory
+      if (conversationMemory) {
+        conversationMemory.addExchange(userText, {
+          sql: cleanSQL,
+          action: 'query',
+          confidence
+        }, {
+          entities: entityMatches,
+          columns: result.metadata?.columns || []
+        });
+      }
+
+      // Execute query
       await runQuery(cleanSQL);
       setChatHistory(prev => [...prev.slice(-2), { question: userText, sql: cleanSQL }]);
+      
     } catch (err) {
       setMessages(prev => [...prev, { text: `AI ERROR: ${err.message}`, sender: 'bot' }]);
     }
     setLoading(false);
+  };
+  
+  // Handle clarification option selection
+  const handleClarificationSelect = (option) => {
+    const clarificationText = `Use ${option.value}`;
+    handleChat(clarificationText);
   };
 
   const { xKey, dataKey } = chartData ? getChartConfig(chartData) : { xKey: '', dataKey: '' };
@@ -558,6 +716,21 @@ ${historyContext}
                         .replace(/(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|CREATE|TABLE|DROP)/g, '<span class="text-emerald-400 font-mono">$1</span>')
                     }}
                   />
+                  
+                  {/* Clarification Options - Command Pills */}
+                  {msg.isClarification && msg.options && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {msg.options.map((option, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleClarificationSelect(option)}
+                          className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-black rounded-full transition-colors font-bold"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

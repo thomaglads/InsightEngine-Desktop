@@ -44,6 +44,10 @@
 - **✅ Code quality tools** and automated linting
 - **✅ Coverage reporting** with configurable thresholds
 
+### **🐛 Bug Fixes (Post-Implementation)**
+- **✅ BigInt Serialization Error Fixed** - Updated `discoveryService.js` to cast DuckDB BigInt values to Number/String before JSON serialization, preventing crashes during data analysis
+- **✅ Blank PDF Generation Fixed** - Refactored print CSS in `ExecutiveReport.jsx` to use `display: none/block` strategy with `!important` overrides, ensuring proper PDF rendering
+
 ---
 
 ## 🚀 **Key Technical Achievements**

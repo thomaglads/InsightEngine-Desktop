@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { FileUploader } from './components/FileUploader';
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Label, Brush } from 'recharts';
-import { Folder, Play, Activity, Database, Globe, GripVertical, Download, FileDown, Eye, EyeOff } from 'lucide-react';
+import { Folder, Play, Activity, Database, Globe, GripVertical, Download, FileDown, Eye, EyeOff, TrendingUp } from 'lucide-react';
 import { CustomTooltip } from './components/ChartComponents';
 import { ExecutiveReport } from './components/ExecutiveReport';
 import IntelligentSQLGenerator from './services/intelligentSQLGenerator';
 import DiscoveryService from './services/discoveryService';
 import ConversationMemory from './services/conversationMemory';
+import { aiService } from './services/aiService';
+import { pythonForecaster } from './services/pythonForecaster';
 
 const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
@@ -25,7 +28,7 @@ function App() {
   const [suggestions, setSuggestions] = useState([]);
   const [chartData, setChartData] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
-  
+
   // Agent Architecture State
   const [awaitingClarification, setAwaitingClarification] = useState(false);
   const [clarificationOptions, setClarificationOptions] = useState([]);
@@ -35,6 +38,10 @@ function App() {
   const [showReport, setShowReport] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  // Python Prediction State
+  const [predictionResult, setPredictionResult] = useState(null);
+  const [isPythonReady, setIsPythonReady] = useState(false);
 
   // Custom UI State
   const [highContrast, setHighContrast] = useState(false);
@@ -48,30 +55,50 @@ function App() {
   const chatEndRef = useRef(null);
 
   useEffect(() => {
-    const initDB = async () => {
-      const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-      const worker = await duckdb.createWorker(bundle.mainWorker);
-      const logger = new duckdb.ConsoleLogger();
-      const newDb = new duckdb.AsyncDuckDB(logger, worker);
-      await newDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
-      const newConn = await newDb.connect();
-      
-      // Initialize intelligent SQL generator
-      const generator = new IntelligentSQLGenerator(newConn);
-      setSqlGenerator(generator);
-      
-      // Initialize Discovery Service for agent architecture
-      const discovery = new DiscoveryService(newConn);
-      setDiscoveryService(discovery);
-      
-      // Initialize Conversation Memory
-      const memory = new ConversationMemory(5);
-      setConversationMemory(memory);
-      
-      setDb(newDb);
-      setConn(newConn);
+    const initServices = async () => {
+      try {
+        // Initialize DuckDB
+        const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+        const worker = await duckdb.createWorker(bundle.mainWorker);
+        const logger = new duckdb.ConsoleLogger();
+        const newDb = new duckdb.AsyncDuckDB(logger, worker);
+        await newDb.instantiate(bundle.mainModule, bundle.pthreadWorker);
+        const newConn = await newDb.connect();
+
+        // Initialize intelligent SQL generator
+        const generator = new IntelligentSQLGenerator(newConn);
+        setSqlGenerator(generator);
+
+        // Initialize Discovery Service for agent architecture
+        const discovery = new DiscoveryService(newConn);
+        setDiscoveryService(discovery);
+
+        // Initialize Conversation Memory
+        const memory = new ConversationMemory(5);
+        setConversationMemory(memory);
+
+        setDb(newDb);
+        setConn(newConn);
+
+        // EMERGENCY FIX 3: Lazy Load Pyodide
+        // Delay Python initialization to prevent "Root Renderer Crash" / White Screen
+        setTimeout(() => {
+          pythonForecaster.initialize()
+            .then(() => {
+              setIsPythonReady(true);
+              console.log('The Scientist (Pyodide) is ready for predictions');
+            })
+            .catch(err => {
+              console.warn('Pyodide initialization failed:', err);
+              setIsPythonReady(false);
+            });
+        }, 2000); // 2 second delay to let React render first
+
+      } catch (error) {
+        console.error('Failed to initialize services:', error);
+      }
     };
-    initDB();
+    initServices();
   }, []);
 
   useEffect(() => {
@@ -98,8 +125,7 @@ function App() {
     };
   }, [resize, stopResizing]);
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
+  const handleFileUpload = async (file, _content, _analysis) => {
     if (!file || !db) return;
     setLoading(true);
     try {
@@ -121,30 +147,30 @@ function App() {
       if (sqlGenerator) {
         await sqlGenerator.initialize('dataset');
       }
-      
+
       // STEP 3: Clear conversation memory for new file (Fresh Start Rule)
       if (conversationMemory) {
         conversationMemory.clear();
         console.log('Conversation memory cleared for new dataset');
       }
-      
+
       // STEP 1: Run Discovery Service to analyze data
       if (discoveryService) {
-        setMessages(prev => [...prev, { 
-          text: `🔍 Analyzing dataset structure and values...`, 
-          sender: 'bot' 
+        setMessages(prev => [...prev, {
+          text: `🔍 Analyzing dataset structure and values...`,
+          sender: 'bot'
         }]);
-        
+
         const discovery = await discoveryService.discover('dataset');
-        
+
         // Display discovery summary
         const entitySummary = Object.entries(discovery.entities)
           .map(([type, cols]) => `${type}: ${cols.join(', ')}`)
           .join('\n');
-        
-        setMessages(prev => [...prev, { 
-          text: `✅ Dataset loaded! Found ${discovery.rowCount.toLocaleString()} rows.\n\n📊 Detected entities:\n${entitySummary || 'Processing generic data columns'}`, 
-          sender: 'bot' 
+
+        setMessages(prev => [...prev, {
+          text: `✅ Dataset loaded! Found ${discovery.rowCount.toLocaleString()} rows.\n\n📊 Detected entities:\n${entitySummary || 'Processing generic data columns'}`,
+          sender: 'bot'
         }]);
       }
 
@@ -169,7 +195,7 @@ function App() {
           return;
         }
       }
-      
+
       // Fallback to AI-based suggestions
       const suggestionPrompt = `You are a Data Assistant. The available columns are: ${columnNames.join(', ')}. Generate 3 distinct, simple business questions a non-technical user might ask about this data.
       RULES:
@@ -216,17 +242,17 @@ function App() {
       // Use PRAGMA table_info to get real data types from the database
       const tableInfoResult = await conn.query('PRAGMA table_info(dataset)');
       const tableInfo = tableInfoResult.toArray();
-      
+
       // Filter columns that are ACTUALLY numeric in the database
       const numericTypes = ['INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'DOUBLE', 'REAL', 'FLOAT', 'DECIMAL', 'NUMERIC'];
       const numericCols = tableInfo
         .filter(col => numericTypes.includes(col.type.toUpperCase()))
         .map(col => col.name);
-      
+
       if (numericCols.length === 0) {
         throw new Error('No numeric columns found in dataset. DuckDB reports all columns as non-numeric types. Please ensure your CSV contains numeric data (not text like "$100,000" or "High/Low").');
       }
-      
+
       // Now from the ACTUALLY numeric columns, pick the best one by name
       let valueCol = null;
       const priorities = ['sales', 'revenue', 'profit', 'amount', 'cost', 'salary', 'quantity', 'value'];
@@ -237,19 +263,19 @@ function App() {
           break;
         }
       }
-      
+
       // If no priority match, use first numeric column that's not an ID
       if (!valueCol) {
-        valueCol = numericCols.find(col => 
-          !col.toLowerCase().includes('id') && 
+        valueCol = numericCols.find(col =>
+          !col.toLowerCase().includes('id') &&
           !col.toLowerCase().includes('_id')
         ) || numericCols[0];
       }
-      
+
       if (!valueCol) {
         throw new Error(`Could not identify a suitable numeric column. Database reports these numeric columns: ${numericCols.join(', ')}`);
       }
-      
+
       // For date and category columns, we can use name heuristics since they're for grouping only
       const dateCol = dbSchema.find(c => ['date', 'time', 'year', 'month'].some(k => c.toLowerCase().includes(k))) || null;
       const catCol = dbSchema.find(c => ['category', 'region', 'segment', 'product', 'department'].some(k => c.toLowerCase().includes(k))) || null;
@@ -401,28 +427,85 @@ function App() {
     img.src = 'data:image/svg+xml;base64,' + btoa(svgString);
   };
 
-  const runQuery = async (sql) => {
+  const runQuery = async (sql, visualHint = 'chart') => {
     if (!conn) return;
     try {
       const result = await conn.query(sql);
-      const rawData = result.toArray().map(row => {
+      let rawData = result.toArray().map(row => {
         const newRow = {};
         for (let key in row) {
           const val = row[key];
-          // Round numbers to 2 decimals for clean display
-          newRow[key] = typeof val === 'bigint' ? Number(val) : (typeof val === 'number' ? Math.round(val * 100) / 100 : val);
+
+          // CRITICAL: Robust BigInt/Decimal Cleaning
+          if (typeof val === 'bigint') {
+            newRow[key] = Number(val);
+          } else if (typeof val === 'number') {
+            // Handle standard numbers
+            newRow[key] = Math.round(val * 100) / 100;
+          } else if (val && typeof val === 'object' && val.toString) {
+            // Handle some DuckDB specific object wrappers if they exist
+            const str = val.toString();
+            // Check if it looks like a number
+            if (/^-?\d+$/.test(str)) {
+              newRow[key] = Number(str);
+            } else {
+              newRow[key] = str;
+            }
+          } else {
+            newRow[key] = val;
+          }
         }
         return newRow;
       });
-      if (rawData.length > 0) setChartData(rawData);
+
+      // Visual Gatekeeper: Determine display mode based on visual_hint and data
+      let displayMode = visualHint;
+
+      // Override visual_hint based on data characteristics
+      if (rawData.length === 0) {
+        displayMode = 'none';
+      } else if (rawData.length === 1) {
+        // Single row - show as KPI
+        displayMode = 'kpi';
+      } else if (visualHint === 'kpi' && rawData.length > 1) {
+        // If AI wanted KPI but we have multiple rows, check if it's an aggregate
+        const firstRow = rawData[0];
+        const keys = Object.keys(firstRow);
+        const hasAggregates = keys.some(k =>
+          k.toLowerCase().includes('sum') ||
+          k.toLowerCase().includes('count') ||
+          k.toLowerCase().includes('avg') ||
+          k.toLowerCase().includes('total')
+        );
+        displayMode = hasAggregates ? 'kpi' : 'table';
+      }
+
+      // Store display mode with data
+      if (rawData.length > 0) {
+        setChartData({
+          data: rawData,
+          displayMode: displayMode,
+          visualHint: visualHint
+        });
+      } else {
+        setChartData({
+          data: [],
+          displayMode: 'none',
+          visualHint: visualHint
+        });
+      }
     } catch (err) {
       setMessages(prev => [...prev, { text: `SQL ERROR: ${err.message}`, sender: 'bot' }]);
     }
   };
 
   // Helper to intelligently determine axes
-  const getChartConfig = (data) => {
-    if (!data || data.length === 0) return { xKey: '', dataKey: '' };
+  const getChartConfig = (chartDataObj) => {
+    if (!chartDataObj || !chartDataObj.data || chartDataObj.data.length === 0) {
+      return { xKey: '', dataKey: '', displayMode: 'none' };
+    }
+
+    const data = chartDataObj.data;
     const keys = Object.keys(data[0]);
 
     // Find first string key for X-Axis (Category)
@@ -435,7 +518,12 @@ function App() {
     // If no number found, default to second key or first
     if (!dataKey) dataKey = keys.find(k => k !== xKey) || keys[0];
 
-    return { xKey, dataKey };
+    return {
+      xKey,
+      dataKey,
+      displayMode: chartDataObj.displayMode || 'chart',
+      visualHint: chartDataObj.visualHint || 'chart'
+    };
   };
 
   const generateQuery = async (historyContext, lastMessage) => {
@@ -514,11 +602,15 @@ ${historyContext}
   };
 
   const handleChat = async (clarificationResponse = null) => {
-    if ((!input.trim() && !clarificationResponse) || !sqlGenerator) return;
-    
-    // Handle clarification response
+    // FIX: Ensure clarificationResponse is a string, not an Event object from onClick
+    const isExplicitText = typeof clarificationResponse === 'string';
+
+    // Use input if no explicit text provided
+    if ((!input.trim() && !isExplicitText) || !conn) return;
+
+    // Handle clarification response or normal input
     let userText;
-    if (clarificationResponse) {
+    if (isExplicitText && clarificationResponse) {
       userText = clarificationResponse;
       setAwaitingClarification(false);
       setClarificationOptions([]);
@@ -526,137 +618,130 @@ ${historyContext}
       userText = input;
       setInput('');
     }
-    
+
     setMessages(prev => [...prev, { text: userText, sender: 'user' }]);
     setLoading(true);
 
     try {
-      // STEP 2: ReAct Pattern - Reason + Act
-      // THINK: Analyze metadata_cache and conversation history
-      
-      // Resolve pronouns from conversation history
-      let resolvedText = userText;
-      if (conversationMemory) {
-        const pronounResolution = conversationMemory.resolvePronouns(userText);
-        if (pronounResolution.hasPronoun && pronounResolution.resolvedEntity) {
-          resolvedText = pronounResolution.message;
-          console.log('Resolved pronouns:', userText, '→', resolvedText);
-        }
-      }
-      
-      // ACT: Search discovery cache for specific values
-      let entityMatches = [];
-      if (discoveryService) {
-        // Extract potential entity names (capitalized words)
-        const potentialEntities = resolvedText.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
-        
-        for (const entity of potentialEntities) {
-          const matches = discoveryService.searchValue(entity);
-          if (matches.length > 0) {
-            entityMatches = [...entityMatches, ...matches.map(m => ({ ...m, searchTerm: entity }))];
-          }
-        }
-      }
-      
-      // OBSERVE: Check if clarification is needed
-      let clarificationNeeded = false;
-      let clarificationData = null;
-      
-      if (entityMatches.length > 1) {
-        // Multiple matches found - need clarification
-        const uniqueMatches = entityMatches.filter((match, index, self) => 
-          index === self.findIndex(m => m.column === match.column)
-        );
-        
-        if (uniqueMatches.length > 1) {
-          clarificationNeeded = true;
-          clarificationData = {
-            message: `I found "${entityMatches[0].searchTerm}" in multiple columns. Which one do you mean?`,
-            options: uniqueMatches.map(match => ({
-              label: `${match.column} (${match.entityType || 'text'})`,
-              value: match.column,
-              entityType: match.entityType
-            }))
-          };
-        }
-      }
-      
-      // If clarification needed, ask user
-      if (clarificationNeeded && clarificationData) {
+      // Build context for ReAct pattern
+      let context = {
+        schema: dbSchema,
+        discoveryCache: discoveryService?.metadataCache || null,
+        conversationHistory: conversationMemory?.getHistoryForPrompt() || null
+      };
+
+      // Use AI Service with ReAct pattern
+      const reactResponse = await aiService.generateSQLQuery(userText, context);
+
+      // Handle CLARIFY action
+      if (reactResponse.action === 'CLARIFY') {
         setAwaitingClarification(true);
-        setClarificationOptions(clarificationData.options);
+        setClarificationOptions(reactResponse.payload.options);
         setPendingQuery(userText);
-        
-        setMessages(prev => [...prev, { 
-          text: clarificationData.message,
+
+        setMessages(prev => [...prev, {
+          text: reactResponse.payload.message,
           sender: 'bot',
           isClarification: true,
-          options: clarificationData.options
+          options: reactResponse.payload.options
         }]);
-        
+
         setLoading(false);
         return;
       }
-      
-      // EXECUTE: Build enhanced context with ReAct reasoning
-      let enhancedContext = { chatHistory };
-      
-      // Add discovery context
-      if (discoveryService && discoveryService.metadataCache) {
-        const discoverySummary = discoveryService.getAISummary();
-        enhancedContext.discovery = discoverySummary;
-        
-        // If entity match found, add to context
-        if (entityMatches.length === 1) {
-          enhancedContext.targetEntity = entityMatches[0];
+
+      // Handle PREDICT action (Python/Pyodide) - EXCLUSIVE ROUTE
+      if (reactResponse.action === 'PREDICT') {
+        if (!isPythonReady) {
+          setMessages(prev => [...prev, {
+            text: `⚠️ The Scientist (Python engine) is not ready yet. Please wait a moment and try again.`,
+            sender: 'bot'
+          }]);
+          setLoading(false);
+          return;
         }
+
+        try {
+          // Get current data for Python analysis
+          const currentData = chartData?.data || [];
+
+          // Execute Python code
+          const pythonResult = await pythonForecaster.execute(
+            reactResponse.payload,
+            currentData,
+            { schema: dbSchema }
+          );
+
+          // Display reasoning and Python code
+          setMessages(prev => [...prev, {
+            text: `${reactResponse.thought}\n\n📊 Analysis complete.`,
+            sender: 'bot',
+            isPrediction: true
+          }]);
+
+          // Store prediction result
+          setPredictionResult({
+            result: pythonResult,
+            visualHint: reactResponse.visual_hint,
+            code: reactResponse.payload
+          });
+
+          // Update conversation memory
+          if (conversationMemory) {
+            conversationMemory.addExchange(userText, {
+              action: 'predict',
+              thought: reactResponse.thought,
+              visualHint: reactResponse.visual_hint,
+              result: pythonResult
+            }, {
+              columns: dbSchema
+            });
+          }
+
+        } catch (pythonError) {
+          console.error('Python execution error:', pythonError);
+          setMessages(prev => [...prev, {
+            text: `Python Analysis Error: ${pythonError.message}`,
+            sender: 'bot'
+          }]);
+        }
+
+        setLoading(false);
+        return;
       }
-      
-      // Add conversation history context
-      if (conversationMemory) {
-        enhancedContext.conversationContext = conversationMemory.getHistoryForPrompt();
-      }
-      
-      // Generate query with enhanced context
-      const result = await sqlGenerator.generateQuery(resolvedText, enhancedContext);
-      
-      const cleanSQL = result.sql;
-      const confidence = result.confidence;
-      const warnings = result.warnings;
-      
-      // Display SQL with warnings if any
-      let messageText = cleanSQL;
-      if (warnings.length > 0) {
-        messageText += `\n\n⚠️ Warnings: ${warnings.join(', ')}`;
-      }
-      if (confidence < 0.8) {
-        messageText += `\n\nℹ️ Confidence: ${Math.round(confidence * 100)}%`;
-      }
-      
-      setMessages(prev => [...prev, { text: messageText, sender: 'bot' }]);
+
+      // Handle SQL action
+      const cleanSQL = reactResponse.payload;
+
+      // Display reasoning and SQL
+      setMessages(prev => [...prev, {
+        text: `${reactResponse.thought}\n\n${cleanSQL}`,
+        sender: 'bot',
+        visualHint: reactResponse.visual_hint
+      }]);
 
       // Update conversation memory
       if (conversationMemory) {
         conversationMemory.addExchange(userText, {
           sql: cleanSQL,
-          action: 'query',
-          confidence
+          action: reactResponse.action.toLowerCase(),
+          thought: reactResponse.thought,
+          visualHint: reactResponse.visual_hint
         }, {
-          entities: entityMatches,
-          columns: result.metadata?.columns || []
+          columns: dbSchema
         });
       }
 
-      // Execute query
-      await runQuery(cleanSQL);
+      // Execute query with visual hint context
+      await runQuery(cleanSQL, reactResponse.visual_hint);
       setChatHistory(prev => [...prev.slice(-2), { question: userText, sql: cleanSQL }]);
-      
+
     } catch (err) {
       setMessages(prev => [...prev, { text: `AI ERROR: ${err.message}`, sender: 'bot' }]);
     }
     setLoading(false);
   };
-  
+
   // Handle clarification option selection
   const handleClarificationSelect = (option) => {
     const clarificationText = `Use ${option.value}`;
@@ -679,11 +764,11 @@ ${historyContext}
         </div>
 
         <div className="p-6">
-          <label className="group flex flex-col items-center justify-center h-40 border-2 border-dashed border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 hover:bg-zinc-900/50 transition-all">
-            <Folder size={48} className="text-yellow-500 mb-3 group-hover:text-yellow-400 transition-colors" fill="currentColor" fillOpacity={0.2} />
-            <span className="text-sm font-bold text-zinc-400 group-hover:text-white uppercase tracking-wider">Upload Data</span>
-            <input type="file" onChange={handleFileUpload} accept=".csv" className="hidden" />
-          </label>
+          <FileUploader
+            onFileUpload={handleFileUpload}
+            loading={loading}
+            disabled={!db}
+          />
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -716,7 +801,7 @@ ${historyContext}
                         .replace(/(SELECT|FROM|WHERE|GROUP BY|ORDER BY|LIMIT|CREATE|TABLE|DROP)/g, '<span class="text-emerald-400 font-mono">$1</span>')
                     }}
                   />
-                  
+
                   {/* Clarification Options - Command Pills */}
                   {msg.isClarification && msg.options && (
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -807,6 +892,12 @@ ${historyContext}
             <div className="flex items-center gap-3">
               <Activity size={16} className={conn ? "text-emerald-500" : "text-red-500"} />
               {conn ? "SYSTEM ONLINE" : "OFFLINE"}
+              {isPythonReady && (
+                <span className="ml-2 text-blue-400 flex items-center gap-1">
+                  <TrendingUp size={12} />
+                  SCIENTIST READY
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -816,7 +907,182 @@ ${historyContext}
             ? 'border-black bg-white text-black'
             : 'border-zinc-800 bg-zinc-900/30 text-white'
             }`}>
-            {!chartData ? (
+            {/* PREDICTION RESULT DISPLAY */}
+            {predictionResult ? (
+              <>
+                {/* PREDICTION HEADER */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-center flex-1">
+                    <h3 className={`text-lg font-bold tracking-wide uppercase flex items-center justify-center gap-2 ${highContrast ? 'text-black' : 'text-white'}`}>
+                      <TrendingUp size={20} />
+                      {predictionResult.result?.type === 'forecast' ? 'Forecast Analysis' :
+                        predictionResult.result?.type === 'correlation' ? 'Correlation Analysis' :
+                          predictionResult.result?.type === 'regression' ? 'Regression Analysis' : 'Statistical Analysis'}
+                    </h3>
+                    <p className={`text-sm mt-1 ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      {predictionResult.result?.explanation || 'Analysis complete'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setPredictionResult(null)}
+                    className={`px-3 py-1.5 text-xs rounded transition-colors border ${highContrast
+                      ? 'bg-zinc-200 hover:bg-zinc-300 text-black border-zinc-400'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700 hover:border-zinc-600'
+                      }`}
+                  >
+                    Close Analysis
+                  </button>
+                </div>
+
+                {/* PREDICTION CONTENT */}
+                <div className="flex-1 min-h-0 overflow-auto">
+                  {predictionResult.result?.type === 'forecast' && predictionResult.result?.forecast_data ? (
+                    <>
+                      {/* FORECAST CHART WITH DOTTED LINES */}
+                      <ResponsiveContainer width="100%" height="60%">
+                        <LineChart data={predictionResult.result.forecast_data} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+                          <CartesianGrid stroke={highContrast ? '#000' : '#333'} strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="date"
+                            stroke={highContrast ? '#000' : '#999'}
+                            tick={{ fontSize: 12, fill: highContrast ? '#000' : '#aaa' }}
+                          />
+                          <YAxis
+                            stroke={highContrast ? '#000' : '#999'}
+                            tick={{ fontSize: 12, fill: highContrast ? '#000' : '#aaa' }}
+                          />
+                          <Tooltip content={<CustomTooltip highContrast={highContrast} />} />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="actual"
+                            name="Historical"
+                            stroke={highContrast ? '#000' : '#eab308'}
+                            strokeWidth={2}
+                            dot={false}
+                            connectNulls={false}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="predicted"
+                            name="Forecast"
+                            stroke={highContrast ? '#666' : '#60a5fa'}
+                            strokeWidth={2}
+                            strokeDasharray="5 5"
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+
+                      {/* FORECAST METRICS */}
+                      <div className={`mt-4 p-4 rounded-lg ${highContrast ? 'bg-zinc-100' : 'bg-zinc-800/50'}`}>
+                        <h4 className={`font-bold mb-2 ${highContrast ? 'text-black' : 'text-white'}`}>Forecast Metrics</h4>
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <span className={`text-xs ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>R² Score</span>
+                            <p className={`text-xl font-mono font-bold ${highContrast ? 'text-black' : 'text-white'}`}>
+                              {(predictionResult.result.result?.r_squared || 0).toFixed(3)}
+                            </p>
+                          </div>
+                          <div>
+                            <span className={`text-xs ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>Trend</span>
+                            <p className={`text-xl font-bold capitalize ${highContrast ? 'text-black' : 'text-white'}`}>
+                              {predictionResult.result.result?.trend || 'unknown'}
+                            </p>
+                          </div>
+                          <div>
+                            <span className={`text-xs ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>Confidence</span>
+                            <p className={`text-xl font-mono font-bold ${highContrast ? 'text-black' : 'text-white'}`}>
+                              {((predictionResult.result.confidence || 0) * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : predictionResult.result?.type === 'correlation' ? (
+                    <>
+                      {/* CORRELATION MATRIX DISPLAY */}
+                      <div className={`p-4 rounded-lg ${highContrast ? 'bg-zinc-100' : 'bg-zinc-800/50'}`}>
+                        <h4 className={`font-bold mb-4 ${highContrast ? 'text-black' : 'text-white'}`}>Correlation Matrix</h4>
+                        {predictionResult.result.result?.strongest_correlations && (
+                          <div className="space-y-2">
+                            {predictionResult.result.result.strongest_correlations.map((corr, idx) => (
+                              <div key={idx} className={`flex justify-between items-center p-2 rounded ${highContrast ? 'bg-white' : 'bg-zinc-700/50'}`}>
+                                <span className={`text-sm ${highContrast ? 'text-black' : 'text-white'}`}>
+                                  {corr.column1} vs {corr.column2}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-xs px-2 py-0.5 rounded ${corr.strength === 'strong' ? 'bg-emerald-500 text-white' :
+                                    corr.strength === 'moderate' ? 'bg-yellow-500 text-black' :
+                                      'bg-zinc-500 text-white'
+                                    }`}>
+                                    {corr.strength}
+                                  </span>
+                                  <span className={`font-mono text-sm ${highContrast ? 'text-black' : 'text-white'}`}>
+                                    {corr.correlation.toFixed(3)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : predictionResult.result?.type === 'regression' ? (
+                    <>
+                      {/* REGRESSION RESULTS DISPLAY */}
+                      <div className={`p-4 rounded-lg ${highContrast ? 'bg-zinc-100' : 'bg-zinc-800/50'}`}>
+                        <h4 className={`font-bold mb-4 ${highContrast ? 'text-black' : 'text-white'}`}>Regression Results</h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <span className={`text-xs ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>R² Score</span>
+                            <p className={`text-2xl font-mono font-bold ${highContrast ? 'text-black' : 'text-white'}`}>
+                              {(predictionResult.result.result?.r_squared || 0).toFixed(3)}
+                            </p>
+                          </div>
+                          <div>
+                            <span className={`text-xs ${highContrast ? 'text-zinc-600' : 'text-zinc-400'}`}>RMSE</span>
+                            <p className={`text-2xl font-mono font-bold ${highContrast ? 'text-black' : 'text-white'}`}>
+                              {(predictionResult.result.result?.rmse || 0).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                        {predictionResult.result.result?.feature_importance && (
+                          <div className="mt-4">
+                            <h5 className={`font-bold text-sm mb-2 ${highContrast ? 'text-black' : 'text-white'}`}>Feature Importance</h5>
+                            <div className="space-y-1">
+                              {predictionResult.result.result.feature_importance.map((feat, idx) => (
+                                <div key={idx} className="flex justify-between items-center">
+                                  <span className={`text-sm ${highContrast ? 'text-zinc-700' : 'text-zinc-300'}`}>{feat.feature}</span>
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-32 h-2 rounded-full ${highContrast ? 'bg-zinc-300' : 'bg-zinc-600'}`}>
+                                      <div
+                                        className={`h-full rounded-full ${feat.impact === 'positive' ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                                        style={{ width: `${Math.min(Math.abs(feat.coefficient) * 100 / Math.max(...predictionResult.result.result.feature_importance.map(f => Math.abs(f.coefficient))), 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className={`text-xs font-mono ${highContrast ? 'text-black' : 'text-zinc-400'}`}>
+                                      {feat.coefficient.toFixed(3)}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className={`p-4 rounded-lg ${highContrast ? 'bg-zinc-100' : 'bg-zinc-800/50'}`}>
+                      <h4 className={`font-bold mb-2 ${highContrast ? 'text-black' : 'text-white'}`}>Analysis Result</h4>
+                      <pre className={`text-sm overflow-auto ${highContrast ? 'text-black' : 'text-zinc-300'}`}>
+                        {JSON.stringify(predictionResult.result?.result || predictionResult.result, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : !chartData ? (
               <div className={`flex-1 flex flex-col items-center justify-center select-none ${highContrast ? 'text-black' : 'text-zinc-600'}`}>
                 <Globe size={96} strokeWidth={0.5} className="mb-6 opacity-40 animate-pulse" />
                 <p className="text-sm tracking-[0.3em] font-bold opacity-80">VISUALIZATION OFFLINE</p>

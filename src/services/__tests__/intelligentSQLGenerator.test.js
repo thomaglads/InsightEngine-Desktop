@@ -1,5 +1,4 @@
 import IntelligentSQLGenerator from '../intelligentSQLGenerator.js';
-import DatabaseIntrospection from '../databaseIntrospection.js';
 
 describe('IntelligentSQLGenerator', () => {
   let mockConn;

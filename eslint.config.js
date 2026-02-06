@@ -17,4 +17,14 @@ export default [
       },
     },
   },
+  {
+    files: ['**/__tests__/**/*.js', '**/setupTests.js'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.jest,
+      },
+    },
+  },
 ]

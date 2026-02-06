@@ -321,7 +321,7 @@ export class IntelligentSQLGenerator {
   /**
    * Build the actual SQL query with perfect syntax
    */
-  buildSQLQuery(intent, columns, context) {
+  buildSQLQuery(intent, columns) {
     const tableName = CONFIG.DATABASE.TABLE_NAME;
     const parts = [];
     
@@ -408,7 +408,8 @@ export class IntelligentSQLGenerator {
     // Add date columns for time-based grouping
     if (intent.grouping === 'by_time' && columns.dates.length > 0) {
       const dateCol = columns.dates[0];
-      selects.unshift(`strftime(strptime("${dateCol.name}", '%m/%d/%Y'), '%Y-%m') as period`);
+      // Use strftime directly on date strings (ISO format YYYY-MM-DD)
+      selects.unshift(`strftime("${dateCol.name}", '%Y-%m') as period`);
     }
     
     return selects;
@@ -475,7 +476,8 @@ export class IntelligentSQLGenerator {
     
     if (intent.grouping === 'by_time' && columns.dates.length > 0) {
       const dateCol = columns.dates[0];
-      groupCols.push(`strftime(strptime("${dateCol.name}", '%m/%d/%Y'), '%Y-%m')`);
+      // Use strftime directly on date strings (ISO format YYYY-MM-DD)
+      groupCols.push(`strftime("${dateCol.name}", '%Y-%m')`);
     }
     
     if (columns.dimensions.length > 0) {

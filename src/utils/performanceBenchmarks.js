@@ -38,7 +38,7 @@ export async function benchmarkChartRendering() {
   const dataSizes = [10, 50, 100, 500, 1000, 5000];
   
   for (const size of dataSizes) {
-    const data = generateTestData(size);
+    generateTestData(size);
     
     const endTimer = performanceMonitor.startTimer(`chart_render_${size}`);
     
@@ -115,7 +115,7 @@ export async function benchmarkQueryPagination() {
     
     // Simulate query execution
     const offset = 0;
-    const query = `SELECT * FROM dataset LIMIT ${pageSize} OFFSET ${offset}`;
+    `SELECT * FROM dataset LIMIT ${pageSize} OFFSET ${offset}`;
     
     // Simulate database latency
     await new Promise(resolve => setTimeout(resolve, 50));

@@ -36,6 +36,51 @@ export class FileUploadValidator {
   }
 
   /**
+   * Reads the first chunk of a file to detect encoding and content
+   * @param {File} file - File to read
+   * @param {number} size - Chunk size in bytes (default 50KB)
+   * @returns {Promise<Object>} Object containing text content and detected encoding
+   */
+  static async readHead(file, size = 51200) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const slice = file.slice(0, Math.min(file.size, size));
+
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target.result;
+          const encoding = this.detectEncoding(buffer);
+          const decoder = new TextDecoder(encoding);
+          const text = decoder.decode(buffer);
+          resolve({ text, encoding });
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      reader.onerror = () => reject(new Error('Failed to read file chunk'));
+      reader.readAsArrayBuffer(slice);
+    });
+  }
+
+  /**
+   * Detects text encoding from buffer
+   * @param {ArrayBuffer} buffer - Content buffer
+   * @returns {string} Detected encoding (default utf-8)
+   */
+  static detectEncoding(buffer) {
+    const arr = new Uint8Array(buffer);
+    // UTF-8 BOM
+    if (arr[0] === 0xEF && arr[1] === 0xBB && arr[2] === 0xBF) return 'utf-8';
+    // UTF-16 LE
+    if (arr[0] === 0xFF && arr[1] === 0xFE) return 'utf-16le';
+    // UTF-16 BE
+    if (arr[0] === 0xFE && arr[1] === 0xFF) return 'utf-16be';
+
+    return 'utf-8';
+  }
+
+  /**
    * Validates CSV content structure
    * @param {string} content - The CSV content to validate
    * @returns {Object} Validation result with isValid and error properties
@@ -109,10 +154,10 @@ export class FileUploadValidator {
   static sanitizeFileName(fileName) {
     // Remove path separators and dangerous characters
     return fileName
-      .replace(/[\\\/]/g, '_')
+      .replace(/[\\/]/g, '_')
       .replace(/\.\./g, '_')
       .replace(/[<>:"|?*]/g, '_')
-      .replace(/^[\s\.]+/, '') // Remove leading spaces and dots
+      .replace(/^[\s.]+/, '') // Remove leading spaces and dots
       .substring(0, 255); // Limit length
   }
 
@@ -172,20 +217,31 @@ export class FileUploadValidator {
 export class CSVAnalyzer {
   /**
    * Analyzes CSV content and extracts metadata
-   * @param {string} content - CSV content
+   * @param {string} content - CSV content sample
+   * @param {number} totalFileSize - Total size of the file in bytes
    * @returns {Object} Analysis results with schema and statistics
    */
-  static analyze(content) {
+  static analyze(content, totalFileSize) {
+    if (totalFileSize === undefined) {
+      totalFileSize = content.length;
+    }
     const lines = content.split('\n').filter(line => line.trim());
     const header = lines[0].split(',').map(col => col.trim().replace(/"/g, ''));
+
+    // If content is a sample, we estimate total rows
+    const isSample = totalFileSize > content.length;
+    const estimatedRows = isSample
+      ? Math.floor(totalFileSize / (content.length / lines.length))
+      : Math.max(0, lines.length - 1);
 
     const analysis = {
       columns: header,
       columnCount: header.length,
-      rowCount: Math.max(0, lines.length - 1),
-      estimatedSize: content.length,
+      rowCount: estimatedRows,
+      estimatedSize: totalFileSize,
+      isSample: isSample,
       schema: this.inferSchema(lines, header),
-      statistics: this.calculateStatistics(lines, header)
+      statistics: this.calculateStatistics(lines, header, isSample)
     };
 
     return analysis;
@@ -232,7 +288,7 @@ export class CSVAnalyzer {
         }
 
         // Check if date-like
-        const datePattern = /^\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,4}$/;
+        const datePattern = /^\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}$/;
         if (datePattern.test(value)) {
           dateCount++;
         }
@@ -262,15 +318,15 @@ export class CSVAnalyzer {
    * @param {Array} header - Column headers
    * @returns {Object} Statistics object
    */
-  static calculateStatistics(lines, header) {
+  static calculateStatistics(lines, header, isSample = false) {
     const stats = {
-      totalRows: Math.max(0, lines.length - 1),
+      totalRows: isSample ? 'Estimated' : Math.max(0, lines.length - 1),
       totalColumns: header.length,
       emptyCells: 0,
-      duplicateRows: 0
+      duplicateRows: 0,
+      isApproximate: isSample
     };
 
-    const rowHashes = new Set();
     const seenRows = new Set();
 
     for (let i = 1; i < lines.length; i++) {

@@ -2,6 +2,7 @@ import { CONFIG } from '../config/constants.js';
 
 /**
  * AI Service for managing Ollama API interactions
+ * Implements ReAct (Reasoning + Acting) pattern for SQL generation
  */
 export class AIService {
   constructor() {
@@ -11,35 +12,408 @@ export class AIService {
   }
 
   /**
-   * Generates SQL query from natural language input
-   * @param {string} context - Previous conversation context
+   * Generates query using ReAct pattern with tool selection (SQL or Python)
    * @param {string} question - User's natural language question
-   * @param {Array} schema - Database schema information
-   * @returns {Promise<string>} Generated SQL query
+   * @param {Object} context - Context including discoveryCache, conversationHistory, schema
+   * @returns {Promise<Object>} Response object with thought, action, payload, visual_hint
    */
-  async generateSQLQuery(context, question, schema) {
-    const systemPrompt = this.buildSQLPrompt(schema);
-    const prompt = `${context}\n[CURRENT REQUEST]`;
+  async generateQuery(question, context = {}) {
+    const { discoveryCache, conversationHistory, schema } = context;
+
+    // Check for ambiguity before calling AI
+    const ambiguityCheck = this.checkAmbiguity(question, discoveryCache);
+    if (ambiguityCheck.needsClarification) {
+      return {
+        thought: `I detected the value "${ambiguityCheck.searchTerm}" appears in multiple columns: ${ambiguityCheck.matches.map(m => m.column).join(', ')}. I need clarification from the user before proceeding.`,
+        action: 'CLARIFY',
+        payload: {
+          message: ambiguityCheck.message,
+          options: ambiguityCheck.options
+        },
+        visual_hint: 'none'
+      };
+    }
+
+    const systemPrompt = this.buildReActPrompt(schema, discoveryCache);
+    const enhancedPrompt = this.injectContext(question, conversationHistory, discoveryCache);
 
     try {
       const response = await this.makeRequest('chat', {
         model: this.defaultModel,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `${prompt}\n${question}` }
+          { role: 'user', content: enhancedPrompt }
         ],
         stream: false,
-        options: { 
+        options: {
           temperature: CONFIG.AI.TEMPERATURE.SQL_GENERATION,
-          num_predict: 500
+          num_predict: 1200
         }
       });
 
-      return this.sanitizeSQL(response.message.content);
+      return this.parseReActResponse(response.message.content);
     } catch (error) {
-      console.error('SQL Generation Error:', error);
-      throw new Error(`Failed to generate SQL query: ${error.message}`);
+      console.error('Query Generation Error:', error);
+      throw new Error(`Failed to generate query: ${error.message}`);
     }
+  }
+
+  /**
+   * Legacy method for backward compatibility
+   * @deprecated Use generateQuery instead
+   */
+  async generateSQLQuery(question, context = {}) {
+    return this.generateQuery(question, context);
+  }
+
+  /**
+   * Check if the query contains ambiguous references that need clarification
+   * @param {string} question - User's question
+   * @param {Object} discoveryCache - Discovery service cache
+   * @returns {Object} Ambiguity check result
+   */
+  checkAmbiguity(question, discoveryCache) {
+    if (!discoveryCache || !discoveryCache.columns) {
+      return { needsClarification: false };
+    }
+
+    // Extract potential entity names (capitalized words or quoted strings)
+    const potentialEntities = question.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) || [];
+
+    for (const entity of potentialEntities) {
+      const matches = [];
+
+      // Search through all columns for this value
+      Object.entries(discoveryCache.columns).forEach(([columnName, columnData]) => {
+        if (columnData.topValues && columnData.topValues.length > 0) {
+          const found = columnData.topValues.some(({ value }) =>
+            String(value).toLowerCase() === entity.toLowerCase()
+          );
+
+          if (found) {
+            matches.push({
+              column: columnName,
+              entityType: columnData.entityType || 'text',
+              value: entity
+            });
+          }
+        }
+      });
+
+      // If found in multiple columns, need clarification
+      if (matches.length > 1) {
+        const uniqueMatches = matches.filter((match, index, self) =>
+          index === self.findIndex(m => m.column === match.column)
+        );
+
+        if (uniqueMatches.length > 1) {
+          return {
+            needsClarification: true,
+            searchTerm: entity,
+            matches: uniqueMatches,
+            message: `I found "${entity}" in multiple columns. Which one do you mean?`,
+            options: uniqueMatches.map(match => ({
+              label: `${match.column} (${match.entityType || 'text'})`,
+              value: match.column,
+              entityType: match.entityType
+            }))
+          };
+        }
+      }
+    }
+
+    return { needsClarification: false };
+  }
+
+  /**
+   * Builds the ReAct system prompt
+   * @param {Array} schema - Database schema
+   * @param {Object} discoveryCache - Discovery service cache with column metadata
+   * @returns {string} System prompt with ReAct instructions
+   */
+  buildReActPrompt(schema, discoveryCache) {
+    let columnContext = '';
+
+    // Build rich column context from discovery cache
+    if (discoveryCache && discoveryCache.columns) {
+      columnContext = Object.entries(discoveryCache.columns)
+        .map(([name, data]) => {
+          const type = data.isNumeric ? 'numeric' : 'text';
+          const sampleValues = data.topValues
+            ? data.topValues.slice(0, 3).map(v => v.value).join(', ')
+            : '';
+          return `- "${name}" (${type})${sampleValues ? ` [e.g., ${sampleValues}]` : ''}`;
+        })
+        .join('\n');
+    } else if (schema) {
+      columnContext = schema.map(col => `- "${col}"`).join('\n');
+    }
+
+    return `You are a Data Analyst AI with two tools: SQL (DuckDB) and Python (Pyodide). Use the ReAct pattern.
+
+REACT PATTERN - YOU MUST FOLLOW THIS EXACT FORMAT:
+
+THOUGHT: [Your reasoning about which tool to use and why]
+ACTION: ["SQL", "PREDICT", or "CLARIFY"]
+PAYLOAD: [SQL query, Python code, or clarification JSON]
+VISUAL_HINT: [One of: "chart", "kpi", "table", "forecast", "none"]
+
+TOOL SELECTION GUIDE:
+
+Use SQL Tool for:
+- Historical facts and data retrieval
+- Filtering, sorting, grouping
+- Simple aggregations (SUM, COUNT, AVG, MIN, MAX)
+- Basic time-series queries
+
+Use PREDICT Tool (Python/Pyodide) for:
+- Advanced statistics (correlation, regression)
+- Time-series forecasting
+- Predictions and trend extrapolation
+- Machine learning tasks
+- Complex calculations beyond SQL capabilities
+
+WHEN TO CHOOSE PREDICT:
+- User asks for "prediction", "forecast", "trend forecast"
+- User asks for "correlation" or "regression"
+- User asks "what will happen" or "future values"
+- Any request requiring sklearn, pandas, numpy
+
+PYTHON PAYLOAD FORMAT:
+The Python code will receive data as a pandas DataFrame named 'df'.
+CRITICAL: Do NOT use markdown code blocks. Return raw Python code only.
+The code should set a variable called __result with a JSON-compatible Python dictionary.
+
+Example Python payload:
+import pandas as pd
+correlation = df['Discount'].corr(df['Profit'])
+__result = {
+    "type": "correlation",
+    "result": {"correlation": float(correlation)},
+    "explanation": f"Correlation between Discount and Profit is {correlation:.3f}"
+}
+
+DATABASE SCHEMA:
+Table name: '${CONFIG.DATABASE.TABLE_NAME}'
+Available columns:
+${columnContext}
+
+DUCKDB DIALECT RULES:
+- SYNTAX: Use 'LIMIT n' at the end. NEVER use 'TOP' or 'TOP(n)'.
+- QUOTING RULES (CRITICAL):
+  * IDENTIFIERS (Columns/Tables): Use DOUBLE QUOTES. Example: "Product Name"
+  * LITERALS (Values/Formats): Use SINGLE QUOTES. Example: 'Widget A', '%Y-%m'
+  * NEVER use double quotes for string values or format strings.
+- DATE HANDLING:
+  * ALWAYS CAST to DATE before using strftime: strftime(CAST("Date" AS DATE), '%Y-%m')
+  * Dates in CSVs are strings; explicit casting avoids binding errors.
+  * Do NOT use strptime on date columns.
+- FORBIDDEN: Do NOT use strftimetochar, ::DATE, current_year, dateCTR, NOW(), 'yyyy-MM-dd', or TOP.
+- SINGLE TABLE MODE: No JOINs. Use WHERE clauses only.
+- EMPTY VALUES:
+  * Text Columns: WHERE "Column" IS NOT NULL AND "Column" != ''
+  * Numeric Columns: WHERE "Column" IS NOT NULL (DO NOT use != '' for numbers)
+  * Dates: WHERE "Column" IS NOT NULL
+
+DATA HEURISTICS:
+1. NO FILTER GUESSING: DO NOT filter by specific names (like 'Joe Smith') or products unless the user explicitly mentions them.
+   * User: "What do you see?" -> Action: Aggregate by Categorical Column (e.g., Region, Product) first. Avoid complex date logic on first content pass.
+   * User: "Show me Joe" -> Action: Filter by 'Joe'.
+2. PROOF OF EXISTENCE: You MUST check the [KNOWN VALUES IN DATASET] section below.
+   * If user asks for "Widget X" and it is NOT in the known values, use LIKE or explain it might be missing.
+   * Do not infer values that aren't visible in the cache.
+3. NEVER AVG/SUM text columns. Use numeric columns only.
+4. Multi-Dimension Labels: Concatenate with || ' - ' || into column named 'Label'.
+5. 'Active' means End Date IS NULL. 'Inactive' means End Date IS NOT NULL.
+
+VISUAL_HINT GUIDE:
+- "chart": For time-series, comparisons, trends (multiple rows)
+- "kpi": For single value results (SUM, COUNT, AVG of 1 row)
+- "table": For detailed lists (top N items)
+- "forecast": For time-series predictions (dotted forecast lines)
+- "none": For errors or clarifications`;
+  }
+
+  /**
+   * Inject conversation context into the prompt
+   * @param {string} question - Current question
+   * @param {string} conversationHistory - Formatted conversation history
+   * @param {Object} discoveryCache - Discovery cache for entity resolution
+   * @returns {string} Enhanced prompt with context
+   */
+  injectContext(question, conversationHistory, discoveryCache) {
+    let contextParts = [];
+
+    // Add conversation history
+    if (conversationHistory && conversationHistory !== 'No previous conversation context.') {
+      contextParts.push(`[CONVERSATION CONTEXT]\n${conversationHistory}\n`);
+    }
+
+    // Add discovery context with sample values for entity resolution
+    if (discoveryCache && discoveryCache.columns) {
+      const sampleValues = Object.entries(discoveryCache.columns)
+        .filter(([, data]) => data.topValues && data.topValues.length > 0)
+        .map(([name, data]) => {
+          const samples = data.topValues.slice(0, 3).map(v => v.value).join(', ');
+          return `"${name}": ${samples}`;
+        })
+        .join('; ');
+
+      if (sampleValues) {
+        contextParts.push(`[KNOWN VALUES IN DATASET]\n${sampleValues}\n`);
+      }
+    }
+
+    contextParts.push(`[CURRENT REQUEST]\n${question}`);
+
+    return contextParts.join('\n');
+  }
+
+  /**
+   * Parse ReAct formatted response into structured object
+   * @param {string} content - Raw AI response
+   * @returns {Object} Parsed response with thought, action, payload, visual_hint
+   */
+  parseReActResponse(content) {
+    if (!content || content.trim() === '') {
+      throw new Error('Empty response from AI');
+    }
+
+    // SAFETY PATCH: Strip all markdown formatting before parsing
+    let cleanedContent = content
+      .replace(/```python\n?/gi, '')
+      .replace(/```py\n?/gi, '')
+      .replace(/```sql\n?/gi, '')
+      .replace(/```json\n?/gi, '')
+      .replace(/```\n?/g, '');
+
+    const lines = cleanedContent.split('\n').map(line => line.trim()).filter(line => line);
+
+    let thought = '';
+    let action = 'SQL';
+    let payload = '';
+    let visualHint = 'chart';
+
+    let currentSection = null;
+    const sectionBuffer = [];
+
+    for (const line of lines) {
+      if (line.startsWith('THOUGHT:')) {
+        currentSection = 'thought';
+        sectionBuffer.push(line.replace('THOUGHT:', '').trim());
+      } else if (line.startsWith('ACTION:')) {
+        if (currentSection === 'thought') {
+          thought = sectionBuffer.join(' ');
+          sectionBuffer.length = 0;
+        }
+        currentSection = 'action';
+        action = line.replace('ACTION:', '').trim().toUpperCase();
+      } else if (line.startsWith('PAYLOAD:')) {
+        if (currentSection === 'thought') {
+          thought = sectionBuffer.join(' ');
+          sectionBuffer.length = 0;
+        }
+        currentSection = 'payload';
+        sectionBuffer.push(line.replace('PAYLOAD:', '').trim());
+      } else if (line.startsWith('VISUAL_HINT:')) {
+        if (currentSection === 'payload') {
+          payload = sectionBuffer.join(' ');
+          sectionBuffer.length = 0;
+        }
+        currentSection = 'visual_hint';
+        visualHint = line.replace('VISUAL_HINT:', '').trim().toLowerCase();
+      } else {
+        // Continue current section
+        if (currentSection) {
+          sectionBuffer.push(line);
+        }
+      }
+    }
+
+    // Flush remaining buffer
+    if (currentSection === 'thought') {
+      thought = sectionBuffer.join(' ');
+    } else if (currentSection === 'payload') {
+      payload = sectionBuffer.join(' ');
+    }
+
+    // Clean up payload based on action
+    if (action === 'SQL') {
+      payload = this.sanitizeSQL(payload);
+    } else if (action === 'PREDICT') {
+      // For Python/PREDICT action, clean up code but keep it executable
+      payload = this.sanitizePythonCode(payload);
+    } else if (action === 'CLARIFY') {
+      try {
+        // Try to parse as JSON
+        payload = JSON.parse(payload);
+      } catch (e) {
+        // If not valid JSON, wrap in object
+        payload = { message: payload, options: [] };
+      }
+    }
+
+    return {
+      thought: thought || 'Generated query based on user request',
+      action,
+      payload,
+      visual_hint: visualHint
+    };
+  }
+
+  /**
+   * Sanitizes Python code for Pyodide execution
+   * @param {string} code - Raw Python code from AI
+   * @returns {string} Cleaned Python code
+   */
+  sanitizePythonCode(code) {
+    if (!code || code.trim() === '') {
+      throw new Error('Empty Python code from AI');
+    }
+
+    // Remove markdown code blocks and language identifiers
+    let cleanCode = code
+      .replace(/```python\n?/gi, '')
+      .replace(/```py\n?/gi, '')
+      .replace(/```json\n?/gi, '')
+      .replace(/```\n?/g, '')
+      .trim();
+
+    return cleanCode;
+  }
+
+  /**
+   * Sanitizes and fixes common SQL generation issues
+   * @param {string} sql - Raw SQL from AI
+   * @returns {string} Sanitized SQL
+   */
+  sanitizeSQL(sql) {
+    if (!sql || sql.trim() === '') {
+      throw new Error('Failed to generate SQL query');
+    }
+
+    let cleanSQL = sql
+      .replace(/```sql|```/g, '')
+      .trim();
+
+    // Fix "SELECT TOP(n)" hallucination by converting to LIMIT
+    const topMatch = cleanSQL.match(/SELECT\s+TOP\s*\(?\s*(\d+)\s*\)?\s+(.*?)\s+FROM/i);
+    if (topMatch) {
+      const limit = topMatch[1];
+      const columns = topMatch[2];
+      cleanSQL = cleanSQL.replace(/SELECT\s+TOP\s*\(?\s*(\d+)\s*\)?\s+(.*?)\s+FROM/i, `SELECT ${columns} FROM`);
+
+      if (!cleanSQL.toUpperCase().includes('LIMIT')) {
+        cleanSQL = cleanSQL.replace(/;$/, '') + ` LIMIT ${limit};`;
+      }
+    }
+
+    // Remove any text after the first semicolon
+    if (cleanSQL.includes(';')) {
+      cleanSQL = cleanSQL.split(';')[0] + ';';
+    }
+
+    return cleanSQL;
   }
 
   /**
@@ -63,14 +437,14 @@ export class AIService {
           { role: 'user', content: columnNames.join(', ') }
         ],
         stream: false,
-        options: { 
-          temperature: CONFIG.AI.TEMPERATURE.SUGGESTION_GENERATION 
+        options: {
+          temperature: CONFIG.AI.TEMPERATURE.SUGGESTION_GENERATION
         }
       });
 
       const content = response.message.content.trim();
       const suggestionsArray = JSON.parse(content.replace(/```json|```/g, '').trim());
-      
+
       return Array.isArray(suggestionsArray) ? suggestionsArray : [];
     } catch (error) {
       console.error('Suggestions Generation Error:', error);
@@ -100,8 +474,8 @@ export class AIService {
           { role: 'system', content: summaryPrompt }
         ],
         stream: false,
-        options: { 
-          temperature: CONFIG.AI.TEMPERATURE.SUMMARY_GENERATION 
+        options: {
+          temperature: CONFIG.AI.TEMPERATURE.SUMMARY_GENERATION
         }
       });
 
@@ -110,74 +484,6 @@ export class AIService {
       console.error('Summary Generation Error:', error);
       return 'Executive summary could not be generated due to an error.';
     }
-  }
-
-  /**
-   * Builds the system prompt for SQL generation
-   * @param {Array} schema - Database schema
-   * @returns {string} System prompt
-   */
-  buildSQLPrompt(schema) {
-    return `You are a strict SQL generator for DuckDB.
-The table name is '${CONFIG.DATABASE.TABLE_NAME}'.
-THE AVAILABLE COLUMNS ARE: ${schema.join(', ')}.
-RULES:
-
-1. Use ONLY the columns listed above.
-2. Return ONLY raw SQL. No markdown.
-3. NO Explanations: Return ONLY raw SQL string. Do NOT add any text, comments, or explanations.
-4. NO Markdown: Do NOT use code blocks.
-5. Strict Ending: The output must start with SELECT and end with a semicolon ;. Nothing else.
-
-DUCKDB DIALECT RULES:
-- SYNTAX: Use 'LIMIT n' at the end. NEVER use 'TOP' or 'TOP(n)'.
-- QUOTING: CRITICAL! Column names with spaces MUST be double-quoted.
-  * WRONG: Product Name
-  * RIGHT: "Product Name"
-- TRENDS/DATE MATH: CSV dates are strings. To format or sort, you MUST nest strptime inside strftime.
-  * Formula: strftime(strptime("Column Name", '%m/%d/%Y'), '%Y-%m')
-- FORBIDDEN: Do NOT use strftimetochar, ::DATE, current_year, dateCTR, NOW(), 'yyyy-MM-dd', or TOP.
-- SINGLE TABLE MODE: No JOINs. Use WHERE clauses only.
-
-UNIVERSAL DATA HEURISTICS:
-1. Math on Text: NEVER AVG/SUM text columns. Look for numeric IDs (e.g., 'PerfScoreID', 'SalesValue').
-2. Multi-Dimension Labels: If the query involves 2+ categorical columns (e.g., Region and Category), you MUST concatenate them into one column named 'Label' using || ' - ' ||.
-   * Example: SELECT Region || ' - ' || Category AS Label, SUM(Profit)...
-3. Lifecycle Status: 'Active' means End Date IS NULL. 'Inactive' means End Date IS NOT NULL.`;
-  }
-
-  /**
-   * Sanitizes and fixes common SQL generation issues
-   * @param {string} sql - Raw SQL from AI
-   * @returns {string} Sanitized SQL
-   */
-  sanitizeSQL(sql) {
-    if (!sql || sql.trim() === '') {
-      throw new Error('Failed to generate SQL query');
-    }
-    
-    let cleanSQL = sql
-      .replace(/```sql|```/g, '')
-      .trim();
-
-    // Fix "SELECT TOP(n)" hallucination by converting to LIMIT
-    const topMatch = cleanSQL.match(/SELECT\s+TOP\s*\(?\s*(\d+)\s*\)?\s+(.*?)\s+FROM/i);
-    if (topMatch) {
-      const limit = topMatch[1];
-      const columns = topMatch[2];
-      cleanSQL = cleanSQL.replace(/SELECT\s+TOP\s*\(?\s*(\d+)\s*\)?\s+(.*?)\s+FROM/i, `SELECT ${columns} FROM`);
-      
-      if (!cleanSQL.toUpperCase().includes('LIMIT')) {
-        cleanSQL = cleanSQL.replace(/;$/, '') + ` LIMIT ${limit};`;
-      }
-    }
-
-    // Remove any text after the first semicolon
-    if (cleanSQL.includes(';')) {
-      cleanSQL = cleanSQL.split(';')[0] + ';';
-    }
-
-    return cleanSQL;
   }
 
   /**
@@ -208,9 +514,9 @@ UNIVERSAL DATA HEURISTICS:
    */
   async isServiceAvailable() {
     try {
-      const response = await fetch(`${this.baseUrl}/api/tags`, { 
+      const response = await fetch(`${this.baseUrl}/api/tags`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000) // 5 second timeout
+        signal: AbortSignal.timeout(5000)
       });
       return response.ok;
     } catch (error) {
@@ -228,7 +534,7 @@ UNIVERSAL DATA HEURISTICS:
       return response.models?.map(model => model.name) || [];
     } catch (error) {
       console.error('Failed to fetch models:', error);
-      return [this.defaultModel]; // Fallback to default model
+      return [this.defaultModel];
     }
   }
 
@@ -251,16 +557,16 @@ UNIVERSAL DATA HEURISTICS:
 export const aiService = new AIService();
 
 // Helper functions for specific use cases
-export const generateQuery = (context, question, schema) => 
-  aiService.generateSQLQuery(context, question, schema);
+export const generateQuery = (question, context) =>
+  aiService.generateSQLQuery(question, context);
 
-export const generateSuggestions = (columnNames) => 
+export const generateSuggestions = (columnNames) =>
   aiService.generateSuggestions(columnNames);
 
-export const generateSummary = (data, valueColumn) => 
+export const generateSummary = (data, valueColumn) =>
   aiService.generateExecutiveSummary(data, valueColumn);
 
-export const checkAIService = () => 
+export const checkAIService = () =>
   aiService.isServiceAvailable();
 
 export default aiService;

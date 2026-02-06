@@ -1,4 +1,5 @@
 import { CONFIG } from '../config/constants.js';
+import * as duckdb from '@duckdb/duckdb-wasm';
 
 /**
  * Database Service for managing DuckDB connections and operations
@@ -21,11 +22,11 @@ export class DatabaseService {
       const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
       const worker = await duckdb.createWorker(bundle.mainWorker);
       const logger = new duckdb.ConsoleLogger();
-      
+
       this.db = new duckdb.AsyncDuckDB(logger, worker);
       await this.db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       this.conn = await this.db.connect();
-      
+
       return true;
     } catch (error) {
       console.error('Database initialization failed:', error);
@@ -38,7 +39,7 @@ export class DatabaseService {
    * @param {File} file - CSV file to load
    * @returns {Promise<Object>} Schema information
    */
-  async loadCSVFile(file, content) {
+  async loadCSVFile(file) {
     if (!this.conn) {
       throw new Error('Database not initialized');
     }
@@ -46,7 +47,7 @@ export class DatabaseService {
     try {
       // Clear existing table
       await this.conn.query(`DROP TABLE IF EXISTS ${CONFIG.DATABASE.TABLE_NAME};`);
-      
+
       // Register and create table
       await this.db.registerFileHandle(file.name, file, duckdb.DuckDBDataProtocol.BROWSER_FILEREADER, true);
       await this.conn.query(`CREATE TABLE ${CONFIG.DATABASE.TABLE_NAME} AS SELECT * FROM '${file.name}';`);
@@ -88,15 +89,15 @@ export class DatabaseService {
         for (let key in row) {
           const val = row[key];
           // Handle BigInt and number formatting
-          newRow[key] = typeof val === 'bigint' ? Number(val) : 
-                        (typeof val === 'number' ? Math.round(val * 100) / 100 : val);
+          newRow[key] = typeof val === 'bigint' ? Number(val) :
+            (typeof val === 'number' ? Math.round(val * 100) / 100 : val);
         }
         return newRow;
       });
 
       // Limit results to prevent performance issues
       const limitedResults = rawData.slice(0, CONFIG.PERFORMANCE.CHART_MAX_POINTS);
-      
+
       if (rawData.length > CONFIG.PERFORMANCE.CHART_MAX_POINTS) {
         console.warn(`Query returned ${rawData.length} results, limited to ${CONFIG.PERFORMANCE.CHART_MAX_POINTS} for visualization`);
       }
@@ -147,7 +148,7 @@ export class DatabaseService {
     try {
       // Basic validation checks
       const upperSQL = sql.toUpperCase();
-      
+
       // Check for forbidden operations
       const forbidden = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE'];
       const hasForbidden = forbidden.some(op => upperSQL.includes(op));
@@ -172,7 +173,7 @@ export class DatabaseService {
 
       // Try to explain the query (dry run)
       await this.conn.query(`EXPLAIN ${sql}`);
-      
+
       return { valid: true };
     } catch (error) {
       return { valid: false, error: error.message };

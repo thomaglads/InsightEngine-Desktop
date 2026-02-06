@@ -23,12 +23,12 @@ export class DiscoveryService {
     try {
       // Get row count to decide sampling strategy
       const countResult = await this.conn.query(`SELECT COUNT(*) as count FROM ${tableName}`);
-      const rowCount = countResult.toArray()[0].count;
-      
+      const rowCount = Number(countResult.toArray()[0].count);
+
       // Get schema
       const schemaResult = await this.conn.query(`PRAGMA table_info(${tableName})`);
       const columns = schemaResult.toArray();
-      
+
       const discovery = {
         tableName,
         rowCount,
@@ -42,7 +42,7 @@ export class DiscoveryService {
       for (const column of columns) {
         const columnDiscovery = await this.analyzeColumn(column, tableName, rowCount);
         discovery.columns[column.name] = columnDiscovery;
-        
+
         // Detect entity types
         const entityType = this.detectEntityType(columnDiscovery);
         if (entityType) {
@@ -68,31 +68,31 @@ export class DiscoveryService {
     const columnName = columnInfo.name;
     const isText = ['VARCHAR', 'TEXT'].includes(columnInfo.type.toUpperCase());
     const isNumeric = ['INTEGER', 'BIGINT', 'DOUBLE', 'REAL', 'FLOAT'].includes(columnInfo.type.toUpperCase());
-    
-    let sampleData = [];
+
     let uniqueValues = [];
-    
-    if (totalRows <= 1000) {
-      // Small dataset: analyze entire column
-      const result = await this.conn.query(`
-        SELECT "${columnName}" as value, COUNT(*) as freq
-        FROM ${tableName}
-        WHERE "${columnName}" IS NOT NULL AND "${columnName}" != ''
-        GROUP BY "${columnName}"
-        ORDER BY freq DESC
-        LIMIT ${this.maxUniqueValues}
-      `);
-      uniqueValues = result.toArray().map(row => ({
-        value: row.value,
-        frequency: row.freq
-      }));
-    } else {
+
+    try {
+      if (totalRows <= 1000) {
+        // Small dataset: analyze entire column
+        const result = await this.conn.query(`
+          SELECT "${columnName}" as value, COUNT(*) as freq
+          FROM ${tableName}
+          WHERE "${columnName}" IS NOT NULL AND "${columnName}" != ''
+          GROUP BY "${columnName}"
+          ORDER BY freq DESC
+          LIMIT ${this.maxUniqueValues}
+        `);
+        uniqueValues = result.toArray().map(row => ({
+          value: typeof row.value === 'bigint' ? row.value.toString() : row.value,
+          frequency: Number(row.freq)
+        }));
+      } else {
       // Large dataset: stratified sample
       // Sample first 500, middle 500, last 500
       const offset1 = 0;
       const offset2 = Math.floor(totalRows / 2) - 250;
       const offset3 = totalRows - 500;
-      
+
       const result = await this.conn.query(`
         SELECT "${columnName}" as value, COUNT(*) as freq
         FROM (
@@ -108,23 +108,28 @@ export class DiscoveryService {
         LIMIT ${this.maxUniqueValues}
       `);
       uniqueValues = result.toArray().map(row => ({
-        value: row.value,
-        frequency: row.freq
+        value: typeof row.value === 'bigint' ? row.value.toString() : row.value,
+        frequency: Number(row.freq)
       }));
     }
 
     // Get basic statistics
     let stats = {};
     if (isNumeric) {
-      const statsResult = await this.conn.query(`
-        SELECT 
-          COUNT("${columnName}") as count,
-          MIN("${columnName}") as min,
-          MAX("${columnName}") as max,
-          AVG("${columnName}") as avg
-        FROM ${tableName}
-      `);
-      stats = statsResult.toArray()[0];
+      try {
+        const statsResult = await this.conn.query(`
+          SELECT 
+            COUNT("${columnName}") as count,
+            MIN("${columnName}") as min,
+            MAX("${columnName}") as max,
+            AVG("${columnName}") as avg
+          FROM ${tableName}
+        `);
+        stats = statsResult.toArray()[0];
+      } catch (statsError) {
+        console.warn(`Failed to get statistics for column ${columnName}:`, statsError.message);
+        stats = { count: 0, min: null, max: null, avg: null };
+      }
     }
 
     return {
@@ -139,6 +144,23 @@ export class DiscoveryService {
       cardinality: uniqueValues.length / totalRows,
       hasHighCardinality: uniqueValues.length > 50
     };
+    } catch (error) {
+      console.error(`Discovery failed for column ${columnName}:`, error.message);
+      // Return safe defaults
+      return {
+        name: columnName,
+        type: columnInfo.type,
+        isText,
+        isNumeric,
+        uniqueValues: 0,
+        topValues: [],
+        sampleCoverage: 0,
+        statistics: null,
+        cardinality: 0,
+        hasHighCardinality: false,
+        error: error.message
+      };
+    }
   }
 
   /**
@@ -147,10 +169,10 @@ export class DiscoveryService {
   detectEntityType(columnDiscovery) {
     const { name, isText, topValues, cardinality } = columnDiscovery;
     const lowerName = name.toLowerCase();
-    
+
     // Skip numeric columns
     if (!isText) return null;
-    
+
     // Check for person names
     const personIndicators = ['name', 'employee', 'customer', 'user', 'person', 'contact', 'rep'];
     if (personIndicators.some(ind => lowerName.includes(ind))) {
@@ -160,41 +182,41 @@ export class DiscoveryService {
         // Pattern: Word with capital letter followed by lowercase
         return /^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/.test(str) && str.length > 2;
       });
-      
+
       if (looksLikeNames || cardinality > 0.5) {
         return 'person';
       }
     }
-    
+
     // Check for locations
     const locationIndicators = ['city', 'state', 'country', 'region', 'location', 'address', 'zip'];
     if (locationIndicators.some(ind => lowerName.includes(ind))) {
       return 'location';
     }
-    
+
     // Check for categories
     const categoryIndicators = ['category', 'type', 'status', 'class', 'segment', 'group', 'department'];
     if (categoryIndicators.some(ind => lowerName.includes(ind))) {
       return 'category';
     }
-    
+
     // Check for dates
     const dateIndicators = ['date', 'time', 'created', 'updated', 'modified'];
     if (dateIndicators.some(ind => lowerName.includes(ind))) {
       return 'date';
     }
-    
+
     // Check for product/item identifiers
     const productIndicators = ['product', 'item', 'sku', 'code'];
     if (productIndicators.some(ind => lowerName.includes(ind))) {
       return 'product';
     }
-    
+
     // Heuristic: High cardinality text columns might be identifiers
     if (cardinality > 0.8 && topValues.length > 20) {
       return 'identifier';
     }
-    
+
     return null;
   }
 
@@ -205,26 +227,26 @@ export class DiscoveryService {
    */
   searchValue(value) {
     if (!this.metadataCache) return [];
-    
+
     const matches = [];
     const searchValue = value.toLowerCase();
-    
+
     Object.entries(this.metadataCache.columns).forEach(([columnName, columnData]) => {
-      const found = columnData.topValues.some(({ value: val }) => 
+      const found = columnData.topValues.some(({ value: val }) =>
         String(val).toLowerCase().includes(searchValue)
       );
-      
+
       if (found) {
         matches.push({
           column: columnName,
           entityType: this.detectEntityType(columnData),
-          value: columnData.topValues.find(({ value: val }) => 
+          value: columnData.topValues.find(({ value: val }) =>
             String(val).toLowerCase().includes(searchValue)
           )?.value
         });
       }
     });
-    
+
     return matches;
   }
 
@@ -241,9 +263,9 @@ export class DiscoveryService {
    */
   getAISummary() {
     if (!this.metadataCache) return null;
-    
+
     const { columns, entities, rowCount } = this.metadataCache;
-    
+
     return {
       rowCount,
       columnCount: Object.keys(columns).length,
@@ -271,7 +293,7 @@ export class DiscoveryService {
    */
   getStats() {
     if (!this.metadataCache) return { status: 'empty' };
-    
+
     return {
       status: 'loaded',
       columns: Object.keys(this.metadataCache.columns).length,

@@ -8,74 +8,80 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
     if (!isOpen || !data) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8" style={{ overflowY: 'auto' }}>
             {/* HEADER - No Print */}
             <style>{`
-                   @media print {
-                     @page { margin: 10mm; size: auto; }
-                     body { 
-                       visibility: hidden; 
-                       background: white !important;
-                     }
-                     .print-content { 
-                       visibility: visible !important; 
-                       position: absolute; 
-                       left: 0; 
-                       top: 0; 
-                       width: 100%; 
-                       height: auto !important;
-                       min-height: 100%;
-                       overflow: visible !important;
-                       margin: 0 !important;
-                       padding: 0 !important;
-                       background: white !important;
-                       color: black !important;
-                       z-index: 9999;
-                     }
-                      /* Hide everything else using visibility instead of display */
-                      /* display: none removes elements entirely; visibility: hidden keeps structure */
-                      div:not(.print-content):not(.print-content *) {
-                        visibility: hidden !important;
+                    @media print {
+                      @page { margin: 10mm; size: auto; }
+                      body { 
+                        display: none !important;
+                        background: white !important;
                       }
-                      /* Ensure the print-content container itself stays visible */
-                      .print-content, .print-content * {
-                        visibility: visible !important;
+                      body:has(.print-content) {
+                        display: block !important;
                       }
-                     /* Restore flex/grid inside print content */
-                     .print-content div { display: block !important; }
-                     .print-content .grid { display: grid !important; }
-                     .print-content .flex { display: flex !important; }
-                     
-                     /* Page Break Helpers */
-                     .break-inside-avoid {
-                         break-inside: avoid;
-                         page-break-inside: avoid;
-                     }
-                   }
-                    .no-print { display: none !important; }
-                    /* Hide everything else */
-                    div:not(.print-content):not(.print-content *) {
-                      display: none;
+                      .print-content { 
+                        display: block !important; 
+                        position: absolute; 
+                        left: 0; 
+                        top: 0; 
+                        width: 100%; 
+                        height: auto !important;
+                        min-height: 100%;
+                        overflow: visible !important;
+                        margin: 0 !important;
+                        padding: 10mm !important;
+                        background: white !important;
+                        color: black !important;
+                        z-index: 9999;
+                      }
+                       /* Hide everything else outside print-content */
+                       body > *:not(.print-content):not(.print-content *) {
+                         display: none !important;
+                       }
+                       /* Ensure the print-content and all its children stay visible */
+                       .print-content, .print-content * {
+                         display: block !important;
+                         visibility: visible !important;
+                       }
+                       /* Preserve grid and flex layouts */
+                       .print-content .grid, .print-content.grid { display: grid !important; }
+                       .print-content .flex, .print-content.flex { display: flex !important; }
+                       .print-content .hidden { display: none !important; }
+                      
+                      /* Page Break Helpers */
+                      .break-inside-avoid {
+                          break-inside: avoid;
+                          page-break-inside: avoid;
+                      }
+                      
+                      .no-print { display: none !important; }
+
+                      /* Disable Animations during print */
+                      .no-animation * {
+                          transition: none !important;
+                          animation: none !important;
+                      }
                     }
-                    /* Restore flex/grid inside print content */
-                    .print-content div { display: block; }
-                    .print-content .grid { display: grid; }
-                    .print-content .flex { display: flex; }
-                    
-                    /* Page Break Helpers */
-                    .break-inside-avoid {
-                        break-inside: avoid;
-                        page-break-inside: avoid;
-                    }
-                  }
-                `}</style>
+                 `}</style>
             <div className="flex items-center justify-between p-6 border-b border-zinc-200 no-print">
                 <div>
                     <h2 className="text-2xl font-serif font-bold tracking-tight text-zinc-900">Executive Briefing</h2>
                     <p className="text-sm text-zinc-500 uppercas tracking-wider font-bold">Confidential • {new Date().toLocaleDateString()}</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => window.print()} className="px-4 py-2 text-sm font-bold bg-zinc-900 text-white rounded hover:bg-zinc-800 flex items-center gap-2">
+                    <button onClick={async () => {
+                        // Force Recharts animation to finish/disable
+                        const container = document.querySelector('.print-content');
+                        if (container) container.classList.add('no-animation');
+
+                        // Wait for rendering to stabilize
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+
+                        window.print();
+
+                        if (container) container.classList.remove('no-animation');
+                    }} className="px-4 py-2 text-sm font-bold bg-zinc-900 text-white rounded hover:bg-zinc-800 flex items-center gap-2">
                         <Download size={16} /> Print / PDF
                     </button>
                     <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
@@ -85,7 +91,7 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
             </div>
 
             {/* REPORT CONTENT (Printable Area) */}
-            <div ref={reportRef} className="p-10 space-y-10 print:p-0 print:pt-4 print-content">
+            <div ref={reportRef} className="p-10 space-y-10 print:p-0 print:pt-4 print-content bg-white rounded-lg shadow-2xl max-h-full overflow-y-auto">
 
                 {/* 1. TITLE SECTION */}
                 <div className="border-b-4 border-black pb-6">
@@ -130,7 +136,7 @@ export const ExecutiveReport = ({ isOpen, onClose, data, file }) => {
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                                 <XAxis dataKey="name" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
                                 <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                                <Area type="monotone" dataKey="value" stroke="#000" strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" />
+                                <Area type="monotone" dataKey="value" stroke="#000" strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" isAnimationActive={false} />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>

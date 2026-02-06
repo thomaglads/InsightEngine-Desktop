@@ -248,9 +248,8 @@ export class DatabaseIntrospection {
   /**
    * Infer business purpose of column
    */
-  inferBusinessType(columnName, sampleValues) {
+   inferBusinessType(columnName) {
     const name = columnName.toLowerCase();
-    const firstValue = sampleValues[0]?.toString().toLowerCase() || '';
 
     // Primary business metrics
     const metrics = ['sales', 'revenue', 'profit', 'cost', 'amount', 'price', 'quantity', 'total', 'count'];
@@ -439,7 +438,6 @@ export class DatabaseIntrospection {
     }
 
     // For larger datasets, use statistical sampling
-    const avgRowsPer100 = Math.ceil(sampleData.length / 100);
     return {
       estimated: sampleData.length, // This would be scaled up in real implementation
       confidence: 'medium',
@@ -496,7 +494,7 @@ export class DatabaseIntrospection {
   /**
    * Assess table complexity
    */
-  assessComplexity(columns, sampleData) {
+   assessComplexity(columns) {
     const numericColumns = columns.filter(col => ['numeric', 'integer'].includes(this.getPragmaType(col)));
     const textColumns = columns.filter(col => ['text', 'varchar'].includes(this.getPragmaType(col)));
     const dateColumns = columns.filter(col => ['datetime', 'date'].includes(this.getPragmaType(col)));

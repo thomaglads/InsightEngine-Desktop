@@ -18,8 +18,8 @@ export const CONFIG = {
 
   // AI/LLM configuration
   AI: {
-    OLLAMA_API: 'http://localhost:11434',
-    DEFAULT_MODEL: 'phi3',
+    OLLAMA_API: (typeof process !== 'undefined' && process.env?.OLLAMA_API) || 'http://localhost:11434',
+    DEFAULT_MODEL: 'phi3:latest',
     FALLBACK_MODEL: 'mistral',
     TEMPERATURE: {
       SQL_GENERATION: 0,

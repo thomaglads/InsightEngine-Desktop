@@ -35,7 +35,8 @@ export const initialState = {
     isPythonReady: false,
     pendingQuery: null,
     awaitingClarification: false,
-    clarificationOptions: []
+    clarificationOptions: [],
+    isAIOnline: false
 };
 
 export function appReducer(state, action) {
@@ -45,7 +46,7 @@ export function appReducer(state, action) {
             return { ...state, ...action.payload };
 
         // --- DATA MANAGEMENT (MULTI-TABLE) ---
-        case 'ADD_TABLE':
+case 'ADD_TABLE':
             const newTables = [...state.tables, action.payload];
             return {
                 ...state,
@@ -54,7 +55,7 @@ export function appReducer(state, action) {
                 activeTable: action.payload.name,
                 // Fresh start rule: Clear messages only on FIRST upload to avoid confusion
                 messages: state.tables.length === 0 ? [] : state.messages,
-                queryResult: null
+                chartData: null // Fixed: was using undefined queryResult
             };
 
         case 'SET_RELATIONSHIPS':
@@ -125,6 +126,9 @@ export function appReducer(state, action) {
                 clarificationOptions: action.payload.options,
                 pendingQuery: action.payload.query
             };
+
+        case 'SET_AI_ONLINE':
+            return { ...state, isAIOnline: action.payload };
 
         case 'CLEAR_CLARIFICATION':
             return {

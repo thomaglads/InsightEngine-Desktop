@@ -11,7 +11,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isGeneratingReport }) => {
     console.log("MainVisualization Render Check: ", chartData ? "Data Present" : "No Data");
 
-    if (!chartData) {
+    if (!chartData || !chartData.data || chartData.data.length === 0) {
         return (
             <div className="flex-1 flex items-center justify-center text-gray-400 flex-col gap-4">
                 <div className={`p-6 rounded-full ${highContrast ? 'bg-gray-800' : 'bg-gray-100'} animate-pulse`}>
@@ -25,14 +25,24 @@ const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isG
         );
     }
 
-    // Determine chart type based on data shape
-    const isTimeBased = chartData.data.some(d => {
+// Determine chart type based on data shape
+    const isTimeBased = chartData.data && chartData.data.some(d => {
         const key = Object.keys(d)[0];
         return key.toLowerCase().includes('date') || key.toLowerCase().includes('year') || key.toLowerCase().includes('month');
     });
 
-    const ChartComponent = isTimeBased ? AreaChart : BarChart;
+const ChartComponent = isTimeBased ? AreaChart : BarChart;
     const DataComponent = isTimeBased ? Area : Bar;
+
+    // Safety check for data structure
+    if (!chartData.data || chartData.data.length === 0) {
+        return (
+            <div className="flex-1 flex items-center justify-center text-gray-400 flex-col gap-4">
+                <p className="font-medium">No data available</p>
+                <p className="text-sm opacity-70">Upload data to begin discovery</p>
+            </div>
+        );
+    }
 
     // Dynamic color palette
     const colors = [
@@ -58,8 +68,8 @@ const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isG
                         onClick={onGenerateReport}
                         disabled={isGeneratingReport}
                         className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${highContrast
-                                ? 'bg-yellow-400 text-black hover:bg-yellow-300'
-                                : 'bg-black text-white hover:bg-gray-800'
+                            ? 'bg-yellow-400 text-black hover:bg-yellow-300'
+                            : 'bg-black text-white hover:bg-gray-800'
                             } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                         {isGeneratingReport ? (
@@ -84,8 +94,8 @@ const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isG
                     <ResponsiveContainer width="100%" height="100%">
                         <ChartComponent data={chartData.data} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke={highContrast ? '#374151' : '#E5E7EB'} vertical={false} />
-                            <XAxis
-                                dataKey={Object.keys(chartData.data[0])[0]}
+<XAxis
+                                dataKey={chartData.data[0] ? Object.keys(chartData.data[0])[0] : 'x'}
                                 stroke={highContrast ? '#9CA3AF' : '#6B7280'}
                                 tick={{ fill: highContrast ? '#D1D5DB' : '#4B5563' }}
                                 tickLine={false}
@@ -112,7 +122,7 @@ const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isG
                             />
                             <Legend wrapperStyle={{ paddingTop: '20px' }} />
 
-                            {Object.keys(chartData.data[0]).slice(1).map((key, index) => (
+                            {chartData.data[0] && Object.keys(chartData.data[0]).slice(1).map((key, index) => (
                                 <DataComponent
                                     key={key}
                                     type="monotone"
@@ -127,7 +137,7 @@ const MainVisualization = memo(({ chartData, highContrast, onGenerateReport, isG
                             {/* Gradients for Area Charts */}
                             {isTimeBased && (
                                 <defs>
-                                    {Object.keys(chartData.data[0]).slice(1).map((key, index) => (
+{chartData.data[0] && Object.keys(chartData.data[0]).slice(1).map((key, index) => (
                                         <linearGradient key={`color${index}`} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
                                             <stop offset="5%" stopColor={colors[index % colors.length]} stopOpacity={0.3} />
                                             <stop offset="95%" stopColor={colors[index % colors.length]} stopOpacity={0} />

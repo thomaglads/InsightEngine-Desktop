@@ -10,8 +10,8 @@ import { initializeBigIntSupport } from './utils/bigintUtils.js'
 // Comprehensive BigInt handling for DuckDB-WASM compatibility
 initializeBigIntSupport();
 
-// Fallback BigInt patch for edge cases
-BigInt.prototype.toJSON = function () { return Number(this) };
+// REMOVED: Global BigInt prototype patch was interfering with React
+// Use safeJSONStringify() instead for BigInt handling
 
 // EMERGENCY FIX 2: Initial State Sanity
 // Clears potential corrupted state from previous sessions that might cause white screen
@@ -26,10 +26,17 @@ try {
 }
 
 // Initialize error tracking
-initializeSentry();
+// initializeSentry();
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+try {
+  console.log("Attempting to mount React app...");
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+  console.log("React app mounted successfully");
+} catch (e) {
+  console.error("CRITICAL: React mount failed:", e);
+  document.body.innerHTML = `<div style="color:red; padding:20px;"><h1>App Crash</h1><pre>${e.stack}</pre></div>`;
+}

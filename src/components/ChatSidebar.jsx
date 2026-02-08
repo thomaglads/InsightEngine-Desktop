@@ -66,13 +66,13 @@ const ChatSidebar = ({
 
         {/* Active Table Indicator */}
         <div className="flex gap-2 text-xs overflow-x-auto pb-1 scrollbar-hide">
-          {tables && tables.length > 0 ? (
+{tables && Array.isArray(tables) && tables.length > 0 ? (
             tables.map(t => (
               <span
                 key={t.name}
                 className={`px-2 py-1 rounded-full border transition-colors ${t.name === activeTable
-                    ? 'bg-blue-50 border-blue-200 text-blue-700 font-medium'
-                    : 'bg-gray-50 border-gray-200 text-gray-500'
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-medium'
+                  : 'bg-gray-50 border-gray-200 text-gray-500'
                   }`}
               >
                 📄 {t.name}
@@ -86,7 +86,7 @@ const ChatSidebar = ({
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/50 scroll-smooth">
-        {tables.length === 0 && messages.length === 0 && (
+        {(!tables || tables.length === 0) && (
           <div className="text-center py-10 space-y-4">
             <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
               <span className="text-2xl">📂</span>
@@ -115,15 +115,15 @@ const ChatSidebar = ({
             className={`flex gap-3 ${msg.sender === 'user' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300`}
           >
             <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm ${msg.sender === 'user'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-white border border-gray-200'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-white border border-gray-200'
               }`}>
               {msg.sender === 'user' ? '👤' : '🤖'}
             </div>
 
             <div className={`max-w-[85%] rounded-2xl px-5 py-3.5 shadow-sm text-sm leading-relaxed ${msg.sender === 'user'
-                ? 'bg-indigo-600 text-white rounded-tr-sm'
-                : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm'
+              ? 'bg-indigo-600 text-white rounded-tr-sm'
+              : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm'
               }`}>
               {msg.text}
               {/* Render Clarification Options Inline */}

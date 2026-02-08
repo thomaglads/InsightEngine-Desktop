@@ -19,15 +19,15 @@ export class PythonForecaster {
 
     try {
       console.log('Starting Pyodide initialization (this may take a moment)...');
-      
+
       // EMERGENCY FIX: Add timeout and progressive loading
       const initPromise = this._doInitialize();
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Pyodide initialization timeout')), 45000)
       );
 
       await Promise.race([initPromise, timeoutPromise]);
-      
+
       this.isInitialized = true;
       console.log('Pyodide (The Scientist) initialized successfully');
     } catch (error) {
@@ -48,11 +48,11 @@ export class PythonForecaster {
       // Step 1: Load core Pyodide
       console.log('Loading Pyodide core...');
       const { loadPyodide } = await import('pyodide');
-      
+
       // Step 2: Initialize with minimal config
       console.log('Initializing Pyodide runtime...');
       this.pyodide = await loadPyodide({
-        indexURL: '/pyodide/',
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.29.3/full/',
         fullStdLib: false,
         jsglobals: true
       });
@@ -60,7 +60,7 @@ export class PythonForecaster {
       // Step 3: Load packages progressively with status updates
       console.log('Loading Python packages...');
       const packages = ['pandas', 'numpy', 'scikit-learn'];
-      
+
       for (const pkg of packages) {
         try {
           console.log(`Loading ${pkg}...`);
@@ -71,7 +71,7 @@ export class PythonForecaster {
           // Continue with other packages
         }
       }
-      
+
     } catch (error) {
       throw new Error(`Pyodide initialization failed: ${error.message}`);
     }
@@ -83,7 +83,7 @@ export class PythonForecaster {
    */
   async loadPackage(packageName) {
     if (this.packagesLoaded.has(packageName)) return;
-    
+
     try {
       await this.pyodide.loadPackage(packageName);
       this.packagesLoaded.add(packageName);
@@ -263,7 +263,7 @@ __result = {
    */
   async calculateCorrelation(data, numericColumns) {
     const columnsStr = JSON.stringify(numericColumns);
-    
+
     const pythonCode = `
 # Select only numeric columns
 numeric_cols = ${columnsStr}
@@ -319,7 +319,7 @@ __result = {
    */
   async runRegression(data, targetColumn, featureColumns) {
     const featuresStr = JSON.stringify(featureColumns);
-    
+
     const pythonCode = `
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error

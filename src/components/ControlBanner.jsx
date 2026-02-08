@@ -5,11 +5,12 @@ import { Download, FileDown, FileText, Database, Activity } from 'lucide-react';
  * Control Banner Component - Memoized for performance
  * Contains report generation button and status indicators
  */
-export const ControlBanner = memo(({ 
-  currentFile, 
-  isGeneratingReport, 
+export const ControlBanner = memo(({
+  currentFile,
+  isGeneratingReport,
   generateReport,
   conn,
+  isAIOnline,
   isPythonReady,
   highContrast
 }) => {
@@ -30,11 +31,10 @@ export const ControlBanner = memo(({
           {isGeneratingReport ? 'ANALYZING...' : 'GENERATE BOARD BRIEFING'}
         </button>
       )}
-      
-      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all ${
-        highContrast 
-          ? 'bg-white text-black hover:bg-zinc-200' 
-          : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
+
+      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all ${highContrast
+        ? 'bg-white text-black hover:bg-zinc-200'
+        : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
         }`}
       >
         <FileText size={14} />
@@ -44,13 +44,12 @@ export const ControlBanner = memo(({
       </div>
 
       <div className="flex items-center gap-3">
-        <Database size={16} className={conn ? "text-emerald-500" : "text-red-500"} />
-        <span className={`text-xs font-bold uppercase tracking-wider ${
-          conn ? "text-emerald-400" : "text-red-400"
-        }`}>
-          {conn ? "SYSTEM ONLINE" : "OFFLINE"}
+        <Database size={16} className={isAIOnline ? "text-emerald-500" : "text-red-500"} />
+        <span className={`text-xs font-bold uppercase tracking-wider ${isAIOnline ? "text-emerald-400" : "text-red-400"
+          }`}>
+          {isAIOnline ? "AI SYSTEM ONLINE" : "AI OFFLINE"}
         </span>
-        
+
         {isPythonReady && (
           <span className="ml-3 text-blue-400 flex items-center gap-1">
             <Activity size={12} />

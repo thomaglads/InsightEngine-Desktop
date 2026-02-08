@@ -11,36 +11,22 @@
  * @returns {string} JSON string
  */
 export const safeJSONStringify = (data, replacer = null, space = null) => {
-  return JSON.stringify(data, (key, value) => {
-    // Convert BigInt to regular number
+  const bigIntReplacer = (key, value) => {
+    // Handle BigInt
     if (typeof value === 'bigint') {
       return Number(value);
     }
-    
-    // Handle DuckDB-specific object wrappers that might contain BigInt
-    if (value && typeof value === 'object') {
-      // Check if it's a DuckDB object with toString that returns BigInt
-      if (typeof value.toString === 'function') {
-        const str = value.toString();
-        if (/^\d+n$/.test(str)) {
-          return Number(str.slice(0, -1)); // Remove trailing 'n' and convert to number
-        }
-        if (/^-?\d+$/.test(str)) {
-          return Number(str);
-        }
-      }
-      
-      // Handle nested objects recursively
-      return value;
+    // Handle nested BigInt (DuckDB artifacts)
+    if (value && typeof value === 'object' && value.toString && /^\d+n$/.test(value.toString())) {
+      return Number(value.toString().slice(0, -1));
     }
-    
-    // Apply custom replacer if provided
+    // Custom replacer
     if (replacer) {
       return replacer(key, value);
     }
-    
     return value;
-  }, space);
+  };
+  return JSON.stringify(data, bigIntReplacer, space);
 };
 
 /**
@@ -71,7 +57,7 @@ export const safeJSONParse = (jsonString, reviver = null) => {
  */
 export const sanitizeDuckDBRows = (rows) => {
   if (!Array.isArray(rows)) return [];
-  
+
   return rows.map(row => {
     const safeRow = {};
     for (const [key, value] of Object.entries(row)) {
@@ -102,12 +88,12 @@ export const initializeBigIntSupport = () => {
   // Store original methods
   const originalStringify = JSON.stringify;
   const originalParse = JSON.parse;
-  
+
   // Patch global JSON.stringify (optional - use safeJSONStringify instead)
   // JSON.stringify = function(data, replacer, space) {
   //   return safeJSONStringify(data, replacer, space);
   // };
-  
+
   console.log('BigInt support initialized for DuckDB compatibility');
 };
 

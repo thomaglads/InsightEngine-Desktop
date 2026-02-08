@@ -18,7 +18,7 @@ export class AIService {
    * @returns {Promise<Object>} Response object with thought, action, payload, visual_hint
    */
   async generateQuery(question, context = {}) {
-    const { discoveryCache, conversationHistory, schema } = context;
+    const { discoveryCache, conversationHistory, schema, tableName } = context;
 
     // Check for ambiguity before calling AI
     const ambiguityCheck = this.checkAmbiguity(question, discoveryCache);
@@ -34,10 +34,11 @@ export class AIService {
       };
     }
 
-    const systemPrompt = this.buildReActPrompt(schema, discoveryCache);
+    const systemPrompt = this.buildReActPrompt(tableName || CONFIG.DATABASE.TABLE_NAME, discoveryCache);
     const enhancedPrompt = this.injectContext(question, conversationHistory, discoveryCache);
 
     try {
+      console.log('🤖 Making AI request to Ollama...');
       const response = await this.makeRequest('chat', {
         model: this.defaultModel,
         messages: [
@@ -47,14 +48,27 @@ export class AIService {
         stream: false,
         options: {
           temperature: CONFIG.AI.TEMPERATURE.SQL_GENERATION,
-          num_predict: 1200
+          num_predict: 500
         }
       });
 
+      console.log('🤖 Ollama response received:', response);
+      if (!response || !response.message || !response.message.content) {
+        throw new Error('Invalid response from Ollama');
+      }
+
       return this.parseReActResponse(response.message.content);
     } catch (error) {
-      console.error('Query Generation Error:', error);
-      throw new Error(`Failed to generate query: ${error.message}`);
+      console.error('🤖 Query Generation Error:', error);
+      console.error('🤖 Error details:', error.message);
+      
+      // Return a fallback response instead of throwing
+      return {
+        thought: `AI service error: ${error.message}. Falling back to basic query.`,
+        action: 'SQL',
+        payload: `SELECT * FROM ${tableName || 'dataset'} LIMIT 10;`,
+        visual_hint: 'table'
+      };
     }
   }
 
@@ -125,13 +139,7 @@ export class AIService {
     return { needsClarification: false };
   }
 
-  /**
-   * Builds the ReAct system prompt
-   * @param {Array} schema - Database schema
-   * @param {Object} discoveryCache - Discovery service cache with column metadata
-   * @returns {string} System prompt with ReAct instructions
-   */
-  buildReActPrompt(schema, discoveryCache) {
+  buildReActPrompt(tableName = CONFIG.DATABASE.TABLE_NAME, discoveryCache) {
     let columnContext = '';
 
     // Build rich column context from discovery cache
@@ -145,93 +153,29 @@ export class AIService {
           return `- "${name}" (${type})${sampleValues ? ` [e.g., ${sampleValues}]` : ''}`;
         })
         .join('\n');
-    } else if (schema) {
-      columnContext = schema.map(col => `- "${col}"`).join('\n');
     }
 
-    return `You are a Data Analyst AI with two tools: SQL (DuckDB) and Python (Pyodide). Use the ReAct pattern.
-
-REACT PATTERN - YOU MUST FOLLOW THIS EXACT FORMAT:
-
-THOUGHT: [Your reasoning about which tool to use and why]
-ACTION: ["SQL", "PREDICT", or "CLARIFY"]
-PAYLOAD: [SQL query, Python code, or clarification JSON]
-VISUAL_HINT: [One of: "chart", "kpi", "table", "forecast", "none"]
-
-TOOL SELECTION GUIDE:
-
-Use SQL Tool for:
-- Historical facts and data retrieval
-- Filtering, sorting, grouping
-- Simple aggregations (SUM, COUNT, AVG, MIN, MAX)
-- Basic time-series queries
-
-Use PREDICT Tool (Python/Pyodide) for:
-- Advanced statistics (correlation, regression)
-- Time-series forecasting
-- Predictions and trend extrapolation
-- Machine learning tasks
-- Complex calculations beyond SQL capabilities
-
-WHEN TO CHOOSE PREDICT:
-- User asks for "prediction", "forecast", "trend forecast"
-- User asks for "correlation" or "regression"
-- User asks "what will happen" or "future values"
-- Any request requiring sklearn, pandas, numpy
-
-PYTHON PAYLOAD FORMAT:
-The Python code will receive data as a pandas DataFrame named 'df'.
-CRITICAL: Do NOT use markdown code blocks. Return raw Python code only.
-The code should set a variable called __result with a JSON-compatible Python dictionary.
-
-Example Python payload:
-import pandas as pd
-correlation = df['Discount'].corr(df['Profit'])
-__result = {
-    "type": "correlation",
-    "result": {"correlation": float(correlation)},
-    "explanation": f"Correlation between Discount and Profit is {correlation:.3f}"
-}
-
-DATABASE SCHEMA:
-Table name: '${CONFIG.DATABASE.TABLE_NAME}'
-Available columns:
-${columnContext}
-
-DUCKDB DIALECT RULES:
-- SYNTAX: Use 'LIMIT n' at the end. NEVER use 'TOP' or 'TOP(n)'.
-- QUOTING RULES (CRITICAL):
-  * IDENTIFIERS (Columns/Tables): Use DOUBLE QUOTES. Example: "Product Name"
-  * LITERALS (Values/Formats): Use SINGLE QUOTES. Example: 'Widget A', '%Y-%m'
-  * NEVER use double quotes for string values or format strings.
-- DATE HANDLING:
-  * ALWAYS CAST to DATE before using strftime: strftime(CAST("Date" AS DATE), '%Y-%m')
-  * Dates in CSVs are strings; explicit casting avoids binding errors.
-  * Do NOT use strptime on date columns.
-- FORBIDDEN: Do NOT use strftimetochar, ::DATE, current_year, dateCTR, NOW(), 'yyyy-MM-dd', or TOP.
-- SINGLE TABLE MODE: No JOINs. Use WHERE clauses only.
-- EMPTY VALUES:
-  * Text Columns: WHERE "Column" IS NOT NULL AND "Column" != ''
-  * Numeric Columns: WHERE "Column" IS NOT NULL (DO NOT use != '' for numbers)
-  * Dates: WHERE "Column" IS NOT NULL
-
-DATA HEURISTICS:
-1. NO FILTER GUESSING: DO NOT filter by specific names (like 'Joe Smith') or products unless the user explicitly mentions them.
-   * User: "What do you see?" -> Action: Aggregate by Categorical Column (e.g., Region, Product) first. Avoid complex date logic on first content pass.
-   * User: "Show me Joe" -> Action: Filter by 'Joe'.
-2. PROOF OF EXISTENCE: You MUST check the [KNOWN VALUES IN DATASET] section below.
-   * If user asks for "Widget X" and it is NOT in the known values, use LIKE or explain it might be missing.
-   * Do not infer values that aren't visible in the cache.
-3. NEVER AVG/SUM text columns. Use numeric columns only.
-4. Multi-Dimension Labels: Concatenate with || ' - ' || into column named 'Label'.
-5. 'Active' means End Date IS NULL. 'Inactive' means End Date IS NOT NULL.
-
-VISUAL_HINT GUIDE:
-- "chart": For time-series, comparisons, trends (multiple rows)
-- "kpi": For single value results (SUM, COUNT, AVG of 1 row)
-- "table": For detailed lists (top N items)
-- "forecast": For time-series predictions (dotted forecast lines)
-- "none": For errors or clarifications`;
+    return `You are a Data Analyst AI. Tools: [SQL, PREDICT, CLARIFY]. Use ReAct format.
+    
+    REACT FORMAT:
+    THOUGHT: [Reasoning]
+    ACTION: [Tool Name]
+    PAYLOAD: [Query/Code/JSON]
+    VISUAL_HINT: [chart/kpi/table/forecast/none]
+    
+    TOOLS:
+    1. SQL (DuckDB): Facts, filtering, aggregation (SUM/AVG/COUNT).
+       - NO "TOP", NO "NOW()". Use "LIMIT 10".
+       - Dates: timestamp '2023-01-01', strftime(CAST("Col" AS DATE), '%Y-%m')
+       - Schema: "${tableName}"
+       - Columns: 
+       ${columnContext}
+    
+    2. PREDICT (Python): Forecasting, correlation, regression.
+       - Returns JSON in __result variable.
+       - Use pandas as pd.
+    
+    3. CLARIFY: Start clarification if ambiguous.`;
   }
 
   /**
@@ -246,7 +190,7 @@ VISUAL_HINT GUIDE:
 
     // Add conversation history
     if (conversationHistory && conversationHistory !== 'No previous conversation context.') {
-      contextParts.push(`[CONVERSATION CONTEXT]\n${conversationHistory}\n`);
+      contextParts.push(`[CONVERSATION CONTEXT]\n${conversationHistory} \n`);
     }
 
     // Add discovery context with sample values for entity resolution
@@ -255,16 +199,16 @@ VISUAL_HINT GUIDE:
         .filter(([, data]) => data.topValues && data.topValues.length > 0)
         .map(([name, data]) => {
           const samples = data.topValues.slice(0, 3).map(v => v.value).join(', ');
-          return `"${name}": ${samples}`;
+          return `"${name}": ${samples} `;
         })
         .join('; ');
 
       if (sampleValues) {
-        contextParts.push(`[KNOWN VALUES IN DATASET]\n${sampleValues}\n`);
+        contextParts.push(`[KNOWN VALUES IN DATASET]\n${sampleValues} \n`);
       }
     }
 
-    contextParts.push(`[CURRENT REQUEST]\n${question}`);
+    contextParts.push(`[CURRENT REQUEST]\n${question} `);
 
     return contextParts.join('\n');
   }
@@ -275,6 +219,9 @@ VISUAL_HINT GUIDE:
    * @returns {Object} Parsed response with thought, action, payload, visual_hint
    */
   parseReActResponse(content) {
+    // DEBUG: Log raw AI response
+    console.log('🤖 AI Raw Response:', content);
+    
     // EMERGENCY FIX: Handle empty or malformed responses gracefully
     if (!content || content.trim() === '') {
       console.warn('AI returned empty response, providing fallback');
@@ -294,22 +241,22 @@ VISUAL_HINT GUIDE:
 
     // SAFETY PATCH: Strip all markdown formatting before parsing
     let cleanedContent = content
-      .replace(/```python\n?/gi, '')
+      .replace(/```python\n ?/gi, '')
       .replace(/```py\n?/gi, '')
       .replace(/```sql\n?/gi, '')
       .replace(/```json\n?/gi, '')
       .replace(/```\n?/g, '');
 
     const lines = cleanedContent.split('\n').map(line => line.trim()).filter(line => line);
-    
+
     // EMERGENCY FIX: Check if we have any ReAct structure at all
-    const hasReActStructure = lines.some(line => 
-      line.startsWith('THOUGHT:') || 
-      line.startsWith('ACTION:') || 
-      line.startsWith('PAYLOAD:') || 
+    const hasReActStructure = lines.some(line =>
+      line.startsWith('THOUGHT:') ||
+      line.startsWith('ACTION:') ||
+      line.startsWith('PAYLOAD:') ||
       line.startsWith('VISUAL_HINT:')
     );
-    
+
     if (!hasReActStructure) {
       console.warn('AI response missing ReAct structure, providing fallback:', content);
       return {
@@ -537,7 +484,7 @@ VISUAL_HINT GUIDE:
    * @param {Object} data - Request data
    * @returns {Promise<Object>} Response data
    */
-  async makeRequest(endpoint, data, timeout = 30000) {
+  async makeRequest(endpoint, data, timeout = 120000) {
     // EMERGENCY FIX: Add timeout and retry mechanism
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -559,7 +506,7 @@ VISUAL_HINT GUIDE:
       }
 
       const result = await response.json();
-      
+
       // Validate response structure
       if (!result || !result.message) {
         throw new Error('Invalid response format from Ollama');
@@ -568,11 +515,11 @@ VISUAL_HINT GUIDE:
       return result;
     } catch (error) {
       clearTimeout(timeoutId);
-      
+
       if (error.name === 'AbortError') {
         throw new Error(`AI request timed out after ${timeout}ms. Please check if Ollama is running.`);
       }
-      
+
       throw error;
     }
   }
@@ -589,6 +536,7 @@ VISUAL_HINT GUIDE:
       });
       return response.ok;
     } catch (error) {
+      console.warn("AI Service Check Failed:", error);
       return false;
     }
   }
